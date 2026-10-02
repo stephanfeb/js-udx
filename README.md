@@ -22,3 +22,10 @@ npm run ci         # typecheck + build + lint + test
 ```
 
 Issues are tracked with beads (`bd ready`).
+
+### Wire conformance vectors
+
+`packages/udx/test/vectors/go-v3.json` is generated from go-udx (expected at
+`../go-udx`) by `tools/gen-vectors`. The codec tests require byte-identical
+encoding and the same accept/reject verdict on truncated and fuzzed input.
+Regenerate after a go-udx wire change with `npm run vectors` (needs Go).

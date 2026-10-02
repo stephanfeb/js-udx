@@ -16,7 +16,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci": "npm run typecheck && npm run build && npm run lint && npm test"
+    "ci": "npm run typecheck && npm run build && npm run lint && npm test",
+    "vectors": "cd tools/gen-vectors && go run . > ../../packages/udx/test/vectors/go-v3.json"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

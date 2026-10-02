@@ -1,1 +1,8 @@
 export * from './constants.js'
+export * from './errors.js'
+export { ConnectionId } from './cid.js'
+export * from './frames.js'
+export * from './packet.js'
+export * from './version.js'
+export * from './stateless-reset.js'
+export { toHex, fromHex } from './bytes.js'
