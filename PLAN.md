@@ -146,18 +146,19 @@ Phase 5 found and fixed two js-udx bugs that Go interop had hidden:
   never reached the peer. It now goes out on open, as in Go and Dart; a write
   in the same tick still shares the packet.
 
-Known Dart limit: dartudx-4u8 loses every stream JS (or Go, or Dart's own dialer)
-opens on a connection after the first, concurrent or back-to-back. Those
-cases are `it.fails` in `dart-interop.test.ts`. One stream per connection,
-which is all the libp2p transport needs, works in both directions.
+dartudx-4u8 is fixed in dart-udx `fix/peer-opened-stream-ids` (not merged):
+dart-udx registered a stream a peer opened under the destination id the peer
+used, which go-udx and js-udx always send as 0, so every stream after the
+first on a connection (concurrent or back-to-back) was merged into the first
+and lost. It now allocates its own id, as go-udx does. `dart-interop.test.ts`
+covers 8 concurrent and back-to-back streams JS→Dart.
 
 Next:
-1. **dartudx-4u8** in dart-udx (streams opened by a peer collide on local id 0).
-2. **Phase 7 (jsudx-rdx.8)** — libp2p interop with go-libp2p-udx-transport and
+1. **Phase 7 (jsudx-rdx.8)** — libp2p interop with go-libp2p-udx-transport and
    dart-libp2p. dart-libp2p's dialer picks random stream IDs (both ends of its
    first stream); js-udx's acceptor finds streams by the peer's ID, so that
    should be fine, but it's untested.
-3. Backlog: netem interop matrix (jsudx-5hp); dartudx-by0; go-udx leftovers
+2. Backlog: netem interop matrix (jsudx-5hp); dartudx-by0; go-udx leftovers
    in jsudx-6u6.
 
 Practical notes: `dart test … | tail` hides the exit code — check with
