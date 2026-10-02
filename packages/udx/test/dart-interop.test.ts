@@ -67,18 +67,14 @@ describe.skipIf(unavailable !== undefined)('interop with dart-udx', () => {
       await until(() => conn.datagramSize === 1472, 20_000)
     }, 30_000)
 
-    // dartudx-4u8: dart-udx registers a stream a peer opens under the
-    // destination id the peer used, and go-udx and js-udx always address a
-    // stream they open to 0. Any later stream on the connection is routed to
-    // Dart's stream 0 — even after that one finished, during its close delay —
-    // where its bytes are acknowledged and dropped. These flip when it's fixed.
-    it.fails('echoes on 2 concurrent streams of one connection (dartudx-4u8)', async () => {
-      await echo(await connect(), 1000, 2, 5_000)
-    }, 30_000)
-    it.fails('echoes on 2 back-to-back streams of one connection (dartudx-4u8)', async () => {
+    // Several streams on one connection, which dart-udx used to merge into
+    // the first: we address a stream we open to 0 throughout (dartudx-4u8).
+    it('echoes on 8 concurrent streams of one connection', async () => {
+      await echo(await connect(), 256 << 10, 8)
+    }, 60_000)
+    it('echoes on back-to-back streams of one connection', async () => {
       const conn = await connect()
-      await echo(conn, 17, 1)
-      await echo(conn, 17, 1, 5_000)
+      for (let i = 0; i < 3; i++) await echo(conn, 1000, 1)
     }, 30_000)
   })
 
