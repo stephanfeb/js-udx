@@ -46,8 +46,9 @@ function pattern (n: number): Uint8Array {
 }
 
 /**
- * Sends `data` and reads exactly as many bytes back. Not to EOF: dart-libp2p
- * never sees the FIN js-libp2p's Yamux sends (jsudx-aof), so its echo doesn't end.
+ * Sends `data` and reads exactly as many bytes back, leaving the end of the
+ * stream to its own test, so a dart-libp2p without the WINDOW_UPDATE FIN fix
+ * (jsudx-aof) still runs the rest.
  */
 async function echoRoundTrip (stream: Stream, data: Uint8Array): Promise<Uint8Array> {
   const out = new Uint8Array(data.length)
@@ -113,21 +114,20 @@ for (const native of [goLibp2pPeer, dartLibp2pPeer] satisfies NativePeer[]) {
       }, 60_000)
 
       // Real time: UDX closes a connection after 30 s without hearing from
-      // the peer. Run with UDX_SLOW_TESTS=1. Against dart-libp2p js-libp2p's
-      // own connection monitor aborts it first: each heartbeat's ping stream
-      // stays half-open, since Dart never sees its FIN (jsudx-aof), and the
-      // second heartbeat exceeds ping's one-stream limit.
-      const idle = process.env.UDX_SLOW_TESTS === undefined ? it.skip : native === dartLibp2pPeer ? it.fails : it
-      idle(`keeps an idle connection open past the UDX idle timeout${native === dartLibp2pPeer ? ' (jsudx-aof)' : ''}`, async () => {
+      // the peer. Run with UDX_SLOW_TESTS=1. Against a dart-libp2p that
+      // ignores FIN on WINDOW_UPDATE (jsudx-aof), js-libp2p's connection
+      // monitor aborts it first, its half-open ping streams piling up.
+      const idle = process.env.UDX_SLOW_TESTS === undefined ? it.skip : it
+      idle('keeps an idle connection open past the UDX idle timeout', async () => {
         const conn = await node.dial(target)
         await new Promise(resolve => setTimeout(resolve, 45_000))
         expect(conn.status).toBe('open')
         expect(await node.services.ping.ping(target)).toBeGreaterThanOrEqual(0)
       }, 60_000)
 
-      // The echo ends its side only once it sees ours end.
-      const halfClose = native === dartLibp2pPeer ? it.fails : it
-      halfClose(`sees ${native.name} end the echo after we end ours${native === dartLibp2pPeer ? ' (jsudx-aof)' : ''}`, async () => {
+      // The echo ends its side only once it sees ours end: go-yamux and
+      // js-libp2p send that FIN on a WINDOW_UPDATE (jsudx-aof).
+      it(`sees ${native.name} end the echo after we end ours`, async () => {
         const stream = await node.dialProtocol(target, ECHO)
         stream.send(pattern(1000))
         await stream.close({ signal: AbortSignal.timeout(5_000) })
@@ -136,6 +136,24 @@ for (const native of [goLibp2pPeer, dartLibp2pPeer] satisfies NativePeer[]) {
         expect(got).toBe(1000)
       }, 30_000)
     })
+
+    // A reset must cost the peer that connection, not the process (jsudx-94k).
+    it(`${native.name} survives js-libp2p aborting a connection`, async () => {
+      const peer = startPeer(binary, ['listen'])
+      const node = await jsNode(false)
+      try {
+        const target = multiaddr(await peer.line('READY', 60_000))
+        const conn = await node.dial(target)
+        await node.services.ping.ping(target)
+        conn.abort(new Error('test abort'))
+        await new Promise(resolve => setTimeout(resolve, 500))
+        expect(peer.proc.exitCode).toBeNull()
+        expect(await node.services.ping.ping(target)).toBeGreaterThanOrEqual(0)
+      } finally {
+        await node.stop()
+        peer.kill()
+      }
+    }, 60_000)
 
     describe(`${native.name} dials js-libp2p`, () => {
       let node: Node

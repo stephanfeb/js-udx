@@ -132,17 +132,22 @@ both directions: Noise + Yamux, ping, identify (protocols, agent, UDX listen
 address) and a 1 MiB echo. dart-libp2p's random stream ids for its first stream
 work against js-udx's acceptor. Idle connections to go-libp2p outlive the UDX
 idle timeout (`UDX_SLOW_TESTS=1`). It found three bugs outside js-udx:
-- **jsudx-aof** (dart-libp2p): its Yamux ignores FIN on WINDOW_UPDATE, which
-  is how go-yamux and js-libp2p half-close. Dart never sees Go or JS end a
-  stream, so echoes never end (the peers and tests read exact lengths instead),
-  and js-libp2p's connection monitor aborts idle connections to Dart after
-  ~20 s, its ping streams left half-open. Both are `it.fails`.
-- **jsudx-94k** (dart-libp2p): a peer resetting a UDX connection crashes the
-  Dart host with an unhandled `UDXTransportException`.
+- **jsudx-aof** (dart-libp2p, fixed on its branch `fix/yamux-fin-on-window-update`,
+  not merged): its Yamux ignored FIN on WINDOW_UPDATE, which is how go-yamux
+  and js-libp2p half-close, so Dart never saw Go or JS end a stream; echoes
+  never ended, and js-libp2p's connection monitor aborted idle connections to
+  Dart after ~20 s, its ping streams left half-open.
+- **jsudx-94k** (dart-libp2p, same branch): a peer resetting a UDX connection
+  crashed the Dart host with an unhandled `UDXTransportException` (a close
+  future completed with an error nobody listened to).
 - **jsudx-bh8** (js-libp2p `@libp2p/utils` 7.4.1): a paused stream's async
   iterator ends at the remote's FIN with data still buffered, which is lost;
   `echo()` hits it under backpressure. Reproduced without UDX. The tests use
   an echo that never pauses. Not yet reported upstream.
+
+The Dart half-close, idle and reset tests in `interop.test.ts` need that
+dart-libp2p branch checked out in `../dart-libp2p`; on its `main` they fail.
+The echoes read exact lengths rather than to EOF, so the rest still runs.
 
 Phase 5 found and fixed two js-udx bugs that Go interop had hidden:
 - The multiplexer announced a new connection only after handling its first
@@ -158,8 +163,7 @@ under the destination id the peer used, which go-udx and js-udx always send as
 and lost. `dart-interop.test.ts` covers 8 concurrent and back-to-back streams.
 
 Next (backlog):
-1. dart-libp2p: jsudx-aof (Yamux FIN on WINDOW_UPDATE) and jsudx-94k (crash
-   on reset); then flip the two Dart `it.fails` in `interop.test.ts`.
+1. Merge dart-libp2p `fix/yamux-fin-on-window-update` (jsudx-aof, jsudx-94k).
 2. Report jsudx-bh8 to js-libp2p.
 3. netem interop matrix (jsudx-5hp); dartudx-by0 (Dart ACKs without SACK
    history); go-udx leftovers (jsudx-6u6).

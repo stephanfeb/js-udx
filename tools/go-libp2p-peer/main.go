@@ -137,9 +137,9 @@ func dial(target string, size int) {
 		}
 		s.CloseWrite()
 	}()
-	// Read exactly what was sent rather than to EOF: dart-libp2p doesn't see
-	// the FIN go-yamux sends on a WINDOW_UPDATE, so its echo never ends its
-	// side (jsudx-aof).
+	// Read exactly what was sent rather than to EOF: a dart-libp2p without
+	// its WINDOW_UPDATE FIN fix never sees go-yamux's FIN, so its echo never
+	// ends its side (jsudx-aof).
 	s.SetReadDeadline(time.Now().Add(60 * time.Second))
 	got := make([]byte, size)
 	n, err := io.ReadFull(s, got)

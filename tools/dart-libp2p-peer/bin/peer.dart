@@ -56,8 +56,8 @@ Future<Host> newHost({String? listen}) async {
 }
 
 /// Reads [n] bytes, or until the stream ends. Not to EOF: go-yamux and
-/// js-libp2p send their FIN on a WINDOW_UPDATE, which dart-libp2p doesn't see
-/// (jsudx-aof), so their echoes never visibly end here.
+/// js-libp2p send their FIN on a WINDOW_UPDATE, which a dart-libp2p without
+/// that fix doesn't see (jsudx-aof).
 Future<Uint8List> readN(P2PStream stream, int n) async {
   final out = BytesBuilder(copy: false);
   while (out.length < n) {
