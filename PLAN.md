@@ -120,12 +120,19 @@ PINGs and probes and ACKs them at once, so our pings succeed, PMTUD rises to
 ## Status and next steps (2026-10-02)
 
 Done: all phases, 0–7. `npm run ci` (on Node 22) = typecheck + build + lint +
-327 tests, including UDX interop over real UDP with go-udx and dart-udx,
+332 tests, including UDX interop over real UDP with go-udx and dart-udx,
 js-libp2p's transport compliance suite, and libp2p interop with go-libp2p and
 dart-libp2p. `npm run interop:go-udx` runs go-udx's bulk and multi-stream
 suites against JS through `tools/bulk-peer`. Released 2026-10-02 with the
 upstream fixes below: dart_udx 3.1.0 and dart_libp2p 3.0.0 (pub.dev), go-udx
 v0.1.3 and go-libp2p-udx-transport v0.1.4.
+
+User docs live in `doc/` and are published on cryptopeer.net under /udx/js/
+(the site's `sources.config.mjs` lists them). Their code is copied from the
+programs in `examples/` (`npm run docs`); `examples/examples.test.ts` runs each
+one against the build and fails on a stale doc. Writing them found jsudx-efc:
+a graceful connection close drops stream data the peer has received but not
+yet read, so the docs say to let the receiver end its side first.
 
 Phase 7 (`packages/libp2p-udx/test/interop.test.ts`): js-libp2p ↔ go-libp2p
 (`tools/go-libp2p-peer`) and js-libp2p ↔ dart-libp2p (`tools/dart-libp2p-peer`),
@@ -163,9 +170,13 @@ under the destination id the peer used, which go-udx and js-udx always send as
 and lost. `dart-interop.test.ts` covers 8 concurrent and back-to-back streams.
 
 Next (backlog):
-1. Drop the tests' non-pausing echo once a fixed @libp2p/utils ships
+1. jsudx-efc: keep received-but-unread data across a graceful close (also
+   affects libp2p-udx when the receiver is paused for backpressure).
+2. Drop the tests' non-pausing echo once a fixed @libp2p/utils ships
    (jsudx-bh8, libp2p/js-libp2p#3646).
-2. netem interop matrix (jsudx-5hp); dartudx-by0 (Dart ACKs without SACK
+3. Publish both packages to npm (jsudx-vwg); the docs install from tarballs
+   until then.
+4. netem interop matrix (jsudx-5hp); dartudx-by0 (Dart ACKs without SACK
    history); go-udx leftovers (jsudx-6u6).
 
 Practical notes: `dart test … | tail` hides the exit code — check with
