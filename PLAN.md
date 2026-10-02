@@ -143,7 +143,7 @@ idle timeout (`UDX_SLOW_TESTS=1`). It found three bugs outside js-udx:
 - **jsudx-bh8** (js-libp2p `@libp2p/utils` 7.4.1): a paused stream's async
   iterator ends at the remote's FIN with data still buffered, which is lost;
   `echo()` hits it under backpressure. Reproduced without UDX. The tests use
-  an echo that never pauses. Not yet reported upstream.
+  an echo that never pauses. Reported as libp2p/js-libp2p#3646.
 
 The Dart half-close, idle and reset tests in `interop.test.ts` need that
 dart-libp2p branch checked out in `../dart-libp2p`; on its `main` they fail.
@@ -164,7 +164,8 @@ and lost. `dart-interop.test.ts` covers 8 concurrent and back-to-back streams.
 
 Next (backlog):
 1. Merge dart-libp2p `fix/yamux-fin-on-window-update` (jsudx-aof, jsudx-94k).
-2. Report jsudx-bh8 to js-libp2p.
+2. Drop the tests' non-pausing echo once a fixed @libp2p/utils ships
+   (jsudx-bh8, libp2p/js-libp2p#3646).
 3. netem interop matrix (jsudx-5hp); dartudx-by0 (Dart ACKs without SACK
    history); go-udx leftovers (jsudx-6u6).
 
