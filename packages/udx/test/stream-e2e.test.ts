@@ -338,6 +338,21 @@ describe('go-udx stream rules', () => {
     return { send, acceptor: acceptor as UdxConnection, streams, received, clock }
   }
 
+  // dart-udx has no connection SYN: its first datagram is already a stream's
+  // SYN. A 'stream' listener attached in the 'connection' handler must still
+  // see that stream, so the connection is announced before it handles it.
+  it('announces a stream opened by the very first datagram', async () => {
+    const { clock, net, server } = memoryPair()
+    const peer = net.createSocket('10.0.0.9', 1234)
+    const dcid = new ConnectionId(Uint8Array.of(3, 3, 3, 3, 3, 3, 3, 3))
+    const scid = new ConnectionId(Uint8Array.of(4, 4, 4, 4, 4, 4, 4, 4))
+    const streams: import('../src/index.js').UdxStream[] = []
+    server.on('connection', c => { c.on('stream', s => streams.push(s)) })
+    peer.send(encodePacket({ version: VERSION_CURRENT, destinationCid: dcid, sourceCid: scid, sequence: 0, destinationStreamId: 0, sourceStreamId: 1, frames: [{ type: FrameType.Stream, fin: false, syn: true, offset: 0, data: new Uint8Array(0) }] }), 9000, '10.0.0.1')
+    await runUntil(clock, () => streams.length > 0, 1000)
+    expect(streams[0]?.remoteId).toBe(1)
+  })
+
   it('acknowledges the connection SYN at once and opens no stream for it', async () => {
     const { received, streams, clock } = await rawPeer()
     await runUntil(clock, () => received.length > 0)

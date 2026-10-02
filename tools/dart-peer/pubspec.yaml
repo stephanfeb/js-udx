@@ -1,0 +1,13 @@
+name: udx_js_interop_dartpeer
+description: >-
+  dart-udx peer for js-udx's interop tests. Same CLI and stderr protocol as
+  tools/go-peer, so one JS test shape drives either implementation.
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  dart_udx:
+    path: ../../../dart-udx

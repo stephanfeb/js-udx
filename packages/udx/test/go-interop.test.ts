@@ -2,7 +2,8 @@
 // ../go-udx. Skipped when Go or go-udx isn't available.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { UdxMultiplexer, dial, type UdxConnection } from '../src/index.js'
-import { type GoPeer, buildGoPeer, goPeerUnavailable, startGoPeer } from './helpers/go-peer.js'
+import { buildGoPeer, goPeerUnavailable } from './helpers/go-peer.js'
+import { type PeerProcess, startPeer } from './helpers/peer-process.js'
 import { collect, equalBytes, pattern, writeAll } from './helpers/net.js'
 
 const unavailable = goPeerUnavailable()
@@ -20,11 +21,11 @@ describe.skipIf(unavailable !== undefined)('interop with go-udx', () => {
   beforeAll(() => { binary = buildGoPeer() }, 180_000)
 
   describe('JS dials a go-udx listener', () => {
-    let peer: GoPeer
+    let peer: PeerProcess
     let port: number
     let conn: UdxConnection
     beforeAll(async () => {
-      peer = startGoPeer(binary, ['listen', '127.0.0.1:0'])
+      peer = startPeer(binary, ['listen', '127.0.0.1:0'])
       port = Number(await peer.line('READY'))
       conn = await dial(port, '127.0.0.1')
     }, 30_000)
@@ -92,7 +93,7 @@ describe.skipIf(unavailable !== undefined)('interop with go-udx', () => {
       [4 << 20, 1],
       [256 << 10, 8]
     ])('echoes %i bytes on each of %i streams', async (size, streams) => {
-      const peer = startGoPeer(binary, ['dial', `127.0.0.1:${mux.address().port}`, String(size), String(streams)])
+      const peer = startPeer(binary, ['dial', `127.0.0.1:${mux.address().port}`, String(size), String(streams)])
       try {
         const result = await peer.line('RESULT', 60_000)
         expect(Number(result)).toBe(size * streams)
