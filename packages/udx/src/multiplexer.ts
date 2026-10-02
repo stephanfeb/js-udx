@@ -224,10 +224,9 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
     const inbound = this.createConnection(pkt.destinationCid, pkt.sourceCid, from.address, from.port, false)
     const early = this.early.get(key)
     this.early.delete(key)
-    inbound.handlePacket(pkt, data.length, from.address, from.port)
-    inbound.start()
-    for (const e of early?.packets ?? []) inbound.handlePacket(e.pkt, e.size, from.address, from.port)
-
+    // Announce the connection before it handles anything: a dart-udx dialer's
+    // first datagram already opens a stream, and 'stream' listeners attached
+    // in a 'connection' handler must see it.
     const waiter = this.acceptWaiters.shift()
     if (waiter !== undefined) {
       waiter.resolve(inbound)
@@ -235,6 +234,10 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
       this.backlog.push(inbound)
     }
     this.emit('connection', inbound)
+
+    inbound.handlePacket(pkt, data.length, from.address, from.port)
+    inbound.start()
+    for (const e of early?.packets ?? []) inbound.handlePacket(e.pkt, e.size, from.address, from.port)
   }
 
   /**

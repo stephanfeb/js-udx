@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 coverage/
 .DS_Store
+
+# Dart interop peer
+.dart_tool/
+tools/dart-peer/pubspec.lock

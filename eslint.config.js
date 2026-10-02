@@ -10,5 +10,12 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'no-constant-condition': ['error', { checkLoops: false }]
     }
+  },
+  {
+    // Plain-Node interop scripts run against the built package.
+    files: ['tools/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly' }
+    }
   }
 )

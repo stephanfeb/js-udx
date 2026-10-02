@@ -119,22 +119,33 @@ PINGs and probes and ACKs them at once, so our pings succeed, PMTUD rises to
 
 ## Status and next steps (2026-10-02)
 
-Done: Phases 0–4 (scaffold, codec, reliability engine, connection/stream/multiplexer,
-Dart parity). `npm run ci` = typecheck + build + lint + 273 tests, including
-go-udx interop over real UDP (`tools/go-peer`, built from `../go-udx`).
-Upstream fixes merged to `main` locally (not pushed) in dart-udx and go-udx.
+Done: Phases 0–5 (scaffold, codec, reliability engine, connection/stream/multiplexer,
+Dart parity, UDX interop). `npm run ci` = typecheck + build + lint + 284 tests,
+including interop over real UDP with go-udx (`tools/go-peer`, built from
+`../go-udx`) and dart-udx (`tools/dart-peer`, compiled from `../dart-udx`).
+`npm run interop:go-udx` runs go-udx's own bulk and multi-stream suites against
+JS through `tools/bulk-peer` (needs go-udx `feat/bulk-peer-override`).
+Upstream fixes merged to `main` locally (not pushed) in dart-udx and go-udx,
+including go-udx `fix/ack-pings` (jsudx-4ge).
 
-Also done: **jsudx-4ge** — go-udx ACKs PINGs sent under a nonzero sequence
-(`fix/ack-pings`, merged locally, not pushed); the Go-interop test now expects
-`ping()` → true and PMTUD → 1472.
+Phase 5 found and fixed two js-udx bugs that Go interop had hidden:
+- The multiplexer announced a new connection only after handling its first
+  datagram. dart-udx has no connection SYN (its first datagram opens a stream),
+  so `'stream'` listeners attached in the `'connection'` handler missed it.
+- A stream's SYN rode its first data or FIN, so a stream opened only to read
+  never reached the peer. It now goes out on open, as in Go and Dart; a write
+  in the same tick still shares the packet.
 
-Next, in order:
-1. **Phase 5 (jsudx-rdx.6)** — Dart side first: JS↔dart-udx interop. Known
-   Dart limits to expect: streams opened *by JS* to Dart collide on Dart's local
-   id 0 beyond the first (dartudx-4u8), and Dart ACKs carry no SACK history so
-   JS recovers loss to Dart by RTO only (dartudx-by0).
-2. **Phase 6** — libp2p transport. Open design item: idle timeout (30 s) vs
-   yamux keep-alive (UDX `ping()` now works against both Go and Dart peers).
+Known Dart limit: dartudx-4u8 loses every stream JS (or Go, or Dart's own dialer)
+opens on a connection after the first, concurrent or back-to-back. Those
+cases are `it.fails` in `dart-interop.test.ts`. One stream per connection,
+which is all the libp2p transport needs, works in both directions.
+
+Next:
+1. **Phase 6 (jsudx-rdx.7)** — libp2p transport. Open design item: idle
+   timeout (30 s) vs yamux keep-alive (UDX `ping()` works against Go and Dart).
+2. Backlog: netem interop matrix (Docker); dartudx-4u8 and dartudx-by0 in
+   dart-udx; go-udx leftovers in jsudx-6u6.
 
 Practical notes: `dart test … | tail` hides the exit code — check with
 `-r json` or `set -o pipefail`. Running go-udx's interop suite rewrites
@@ -154,7 +165,7 @@ Practical notes: `dart test … | tail` hides the exit code — check with
    `stream_initiation`, `multiplexer_handshake`, `sequence_number_desync` tests.
 4. **Parity features** — version negotiation, anti-amplification, connection flow control,
    PMTUD, migration, stateless reset.
-5. **UDX interop** — `bin/bulk-peer` matching Dart's `bulk_peer.dart` CLI/stderr protocol
+5. **UDX interop** *(done)* — `tools/bulk-peer` matching Dart's `bulk_peer.dart` CLI/stderr protocol
    (`READY`/`PROGRESS`/`RESULT`/`CORRUPT`/`WINDOW`) so `go-udx/interop` tests can drive JS;
    JS-side tests that spawn Go peers. Later: netem Docker matrix.
 6. **libp2p transport** — register multiaddr `udx` (0x0300, size 0); Transport/Listener;

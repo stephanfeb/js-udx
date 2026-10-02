@@ -228,6 +228,7 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     if (this.activeStreams >= this.maxStreams) throw new UdxError(ErrorCode.StreamLimitError, 'stream limit exceeded')
     const s = new UdxStream(this.streamHost, this.allocateStreamId(), 0, true, this.streamOptions)
     this.addStream(s)
+    this.scheduleFlush() // its SYN
     return s
   }
 

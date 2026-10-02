@@ -199,6 +199,24 @@ describe('stream lifecycle', () => {
     expect(stream?.initiator).toBe(false)
     expect(stream?.id).toBe(2) // acceptor IDs are even
   })
+
+  // As go-udx and dart-udx do: an opener that only reads still needs the peer
+  // to know the stream exists. A write in the same tick rides with the SYN.
+  it('announces a stream when it is opened, before any write', async () => {
+    const { clock, connect } = memoryPair()
+    const { dialer, acceptor } = await connect()
+    const accepted = acceptor.acceptStream()
+    const opened = dialer.openStream()
+    let stream: import('../src/index.js').UdxStream | undefined
+    void accepted.then(s => { stream = s })
+    await runUntil(clock, () => stream !== undefined, 5_000)
+    expect(stream).toBeDefined()
+    const got = collect(opened)
+    stream?.write(Uint8Array.of(9))
+    stream?.end()
+    await runUntil(clock, () => got.ended())
+    expect(Array.from(got.bytes())).toEqual([9])
+  })
 })
 
 describe('flow control', () => {
@@ -337,6 +355,21 @@ describe('go-udx stream rules', () => {
     await runUntil(clock, () => acceptor !== undefined)
     return { send, acceptor: acceptor as UdxConnection, streams, received, clock }
   }
+
+  // dart-udx has no connection SYN: its first datagram is already a stream's
+  // SYN. A 'stream' listener attached in the 'connection' handler must still
+  // see that stream, so the connection is announced before it handles it.
+  it('announces a stream opened by the very first datagram', async () => {
+    const { clock, net, server } = memoryPair()
+    const peer = net.createSocket('10.0.0.9', 1234)
+    const dcid = new ConnectionId(Uint8Array.of(3, 3, 3, 3, 3, 3, 3, 3))
+    const scid = new ConnectionId(Uint8Array.of(4, 4, 4, 4, 4, 4, 4, 4))
+    const streams: import('../src/index.js').UdxStream[] = []
+    server.on('connection', c => { c.on('stream', s => streams.push(s)) })
+    peer.send(encodePacket({ version: VERSION_CURRENT, destinationCid: dcid, sourceCid: scid, sequence: 0, destinationStreamId: 0, sourceStreamId: 1, frames: [{ type: FrameType.Stream, fin: false, syn: true, offset: 0, data: new Uint8Array(0) }] }), 9000, '10.0.0.1')
+    await runUntil(clock, () => streams.length > 0, 1000)
+    expect(streams[0]?.remoteId).toBe(1)
+  })
 
   it('acknowledges the connection SYN at once and opens no stream for it', async () => {
     const { received, streams, clock } = await rawPeer()
