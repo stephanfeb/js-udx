@@ -123,8 +123,9 @@ Done: all phases, 0–7. `npm run ci` (on Node 22) = typecheck + build + lint +
 327 tests, including UDX interop over real UDP with go-udx and dart-udx,
 js-libp2p's transport compliance suite, and libp2p interop with go-libp2p and
 dart-libp2p. `npm run interop:go-udx` runs go-udx's bulk and multi-stream
-suites against JS through `tools/bulk-peer`. dart-udx 3.1.0 (all the dart-udx
-fixes below) is on pub.dev and GitHub.
+suites against JS through `tools/bulk-peer`. Released 2026-10-02 with the
+upstream fixes below: dart_udx 3.1.0 and dart_libp2p 3.0.0 (pub.dev), go-udx
+v0.1.3 and go-libp2p-udx-transport v0.1.4.
 
 Phase 7 (`packages/libp2p-udx/test/interop.test.ts`): js-libp2p ↔ go-libp2p
 (`tools/go-libp2p-peer`) and js-libp2p ↔ dart-libp2p (`tools/dart-libp2p-peer`),
@@ -132,12 +133,11 @@ both directions: Noise + Yamux, ping, identify (protocols, agent, UDX listen
 address) and a 1 MiB echo. dart-libp2p's random stream ids for its first stream
 work against js-udx's acceptor. Idle connections to go-libp2p outlive the UDX
 idle timeout (`UDX_SLOW_TESTS=1`). It found three bugs outside js-udx:
-- **jsudx-aof** (dart-libp2p, fixed on its branch `fix/yamux-fin-on-window-update`,
-  not merged): its Yamux ignored FIN on WINDOW_UPDATE, which is how go-yamux
+- **jsudx-aof** (dart-libp2p, fixed in 3.0.0): its Yamux ignored FIN on WINDOW_UPDATE, which is how go-yamux
   and js-libp2p half-close, so Dart never saw Go or JS end a stream; echoes
   never ended, and js-libp2p's connection monitor aborted idle connections to
   Dart after ~20 s, its ping streams left half-open.
-- **jsudx-94k** (dart-libp2p, same branch): a peer resetting a UDX connection
+- **jsudx-94k** (dart-libp2p, fixed in 3.0.0): a peer resetting a UDX connection
   crashed the Dart host with an unhandled `UDXTransportException` (a close
   future completed with an error nobody listened to).
 - **jsudx-bh8** (js-libp2p `@libp2p/utils` 7.4.1): a paused stream's async
@@ -145,9 +145,9 @@ idle timeout (`UDX_SLOW_TESTS=1`). It found three bugs outside js-udx:
   `echo()` hits it under backpressure. Reproduced without UDX. The tests use
   an echo that never pauses. Reported as libp2p/js-libp2p#3646.
 
-The Dart half-close, idle and reset tests in `interop.test.ts` need that
-dart-libp2p branch checked out in `../dart-libp2p`; on its `main` they fail.
-The echoes read exact lengths rather than to EOF, so the rest still runs.
+The Dart half-close, idle and reset tests in `interop.test.ts` need
+dart-libp2p ≥ 3.0.0 in `../dart-libp2p`. The echoes read exact lengths rather
+than to EOF, so the rest still runs against older versions.
 
 Phase 5 found and fixed two js-udx bugs that Go interop had hidden:
 - The multiplexer announced a new connection only after handling its first
@@ -163,10 +163,9 @@ under the destination id the peer used, which go-udx and js-udx always send as
 and lost. `dart-interop.test.ts` covers 8 concurrent and back-to-back streams.
 
 Next (backlog):
-1. Merge dart-libp2p `fix/yamux-fin-on-window-update` (jsudx-aof, jsudx-94k).
-2. Drop the tests' non-pausing echo once a fixed @libp2p/utils ships
+1. Drop the tests' non-pausing echo once a fixed @libp2p/utils ships
    (jsudx-bh8, libp2p/js-libp2p#3646).
-3. netem interop matrix (jsudx-5hp); dartudx-by0 (Dart ACKs without SACK
+2. netem interop matrix (jsudx-5hp); dartudx-by0 (Dart ACKs without SACK
    history); go-udx leftovers (jsudx-6u6).
 
 Practical notes: `dart test … | tail` hides the exit code — check with
