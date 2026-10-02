@@ -230,8 +230,8 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
   get peerMaxData (): number { return this.connFc.peerMaxData }
 
   /**
-   * Opens a stream. Nothing goes on the wire until the first write (or `end`),
-   * whose first frame carries SYN.
+   * Opens a stream. It announces itself with a SYN at once, which a write in
+   * the same tick rides along with.
    */
   openStream (): UdxStream {
     if (this.closedFlag) throw this.closedError ?? new ConnectionClosedError(ErrorCode.NoError, '', false)

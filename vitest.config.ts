@@ -25,6 +25,14 @@ export default defineConfig({
           root: here('./packages/libp2p-udx'),
           include: ['test/**/*.test.ts']
         }
+      },
+      {
+        // Runs the example programs as subprocesses against the build.
+        test: {
+          name: 'examples',
+          root: here('./examples'),
+          include: ['*.test.ts']
+        }
       }
     ]
   }

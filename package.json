@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "ci": "npm run typecheck && npm run build && npm run lint && npm test",
+    "docs": "node tools/embed-examples.mjs",
     "vectors": "cd tools/gen-vectors && go run . > ../../packages/udx/test/vectors/go-v3.json",
     "interop:go-udx": "npm run build && UDX_BULK_PEER=\"node $PWD/tools/bulk-peer/bulk-peer.mjs\" go -C ../go-udx test ./interop -count=1 -run 'TestBulk|TestMultiStream' -v"
   },

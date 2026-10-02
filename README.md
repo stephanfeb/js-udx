@@ -13,6 +13,11 @@ Interoperates with [go-udx](../go-udx) and [dart-udx](../dart-udx), and the
 transport with go-libp2p-udx-transport and dart-libp2p. go-udx is the wire
 authority. See [PLAN.md](PLAN.md) for the porting plan and the protocol rules.
 
+**Documentation:** [cryptopeer.net/udx/js](https://cryptopeer.net/udx/js/),
+built from [`doc/`](doc). The packages aren't on npm yet;
+[Getting started](doc/getting-started.md) shows how to install them from
+source. Runnable programs are in [`examples/`](examples).
+
 ## libp2p
 
 ```ts
@@ -80,7 +85,17 @@ npm install
 npm test           # vitest, runs against sources
 npm run build      # tsc -b, both packages
 npm run ci         # typecheck + build + lint + test
+npm run docs       # copy examples/ into the code blocks in doc/
 ```
+
+### Docs and examples
+
+The guides in `doc/` are published on cryptopeer.net. Their code samples are
+copied from the programs in `examples/` by `npm run docs`, between
+`<!-- example: examples/<file>[#region] -->` and `<!-- /example -->` markers;
+edit the example, not the doc. `examples/examples.test.ts` runs each program
+with `node` against the build (Node ≥ 22.18, which runs TypeScript directly)
+and fails if a doc is out of date.
 
 Issues are tracked with beads (`bd ready`).
 

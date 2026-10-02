@@ -8,8 +8,9 @@
     "declaration": false,
     "declarationMap": false,
     "paths": {
-      "@stephanfeb/udx": ["./packages/udx/src/index.ts"]
+      "@stephanfeb/udx": ["./packages/udx/src/index.ts"],
+      "@stephanfeb/libp2p-udx": ["./packages/libp2p-udx/src/index.ts"]
     }
   },
-  "include": ["packages/*/src", "packages/*/test", "vitest.config.ts"]
+  "include": ["packages/*/src", "packages/*/test", "examples", "vitest.config.ts"]
 }
