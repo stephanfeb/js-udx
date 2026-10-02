@@ -239,6 +239,7 @@ export class UdxStream extends EventEmitter<UdxStreamEvents> {
   /** @internal Whether `nextFrame` would return a frame. */
   hasSendable (): boolean {
     if (this.closedFlag) return false
+    if (!this.synSent) return true
     if (this.queuedBytes > 0) return this.fc.sendWindowAvailable() > 0
     return this.endRequested && !this.finSent
   }
@@ -247,6 +248,7 @@ export class UdxStream extends EventEmitter<UdxStreamEvents> {
    * @internal The next STREAM frame to send, of at most `maxData` bytes, or
    * undefined when there is nothing to send or the peer's window is closed.
    * The FIN goes in a frame of its own after the data, as go-udx sends it.
+   * The SYN rides the first of them, or goes alone if neither can be sent.
    */
   nextFrame (maxData: number): StreamFrame | undefined {
     if (this.closedFlag) return undefined
@@ -254,7 +256,7 @@ export class UdxStream extends EventEmitter<UdxStreamEvents> {
       const avail = this.fc.sendWindowAvailable()
       if (avail === 0) {
         this.setBlocked()
-        return undefined
+        return this.nextSyn()
       }
       const data = this.take(Math.min(maxData, this.queuedBytes, avail))
       const frame: StreamFrame = { type: FrameType.Stream, fin: false, syn: !this.synSent, offset: this.bytesSent, data }
@@ -278,7 +280,19 @@ export class UdxStream extends EventEmitter<UdxStreamEvents> {
       queueMicrotask(() => this.maybeClose())
       return frame
     }
-    return undefined
+    return this.nextSyn()
+  }
+
+  /**
+   * A bare SYN, if the stream hasn't announced itself yet. A stream announces
+   * itself when opened, as go-udx and dart-udx do, so an opener that only
+   * reads still has a stream on the other side; a write in the same tick
+   * rides with the SYN instead, since the connection flushes in a microtask.
+   */
+  private nextSyn (): StreamFrame | undefined {
+    if (this.synSent) return undefined
+    this.synSent = true
+    return { type: FrameType.Stream, fin: false, syn: true, offset: 0, data: EMPTY }
   }
 
   private take (n: number): Uint8Array {

@@ -199,6 +199,24 @@ describe('stream lifecycle', () => {
     expect(stream?.initiator).toBe(false)
     expect(stream?.id).toBe(2) // acceptor IDs are even
   })
+
+  // As go-udx and dart-udx do: an opener that only reads still needs the peer
+  // to know the stream exists. A write in the same tick rides with the SYN.
+  it('announces a stream when it is opened, before any write', async () => {
+    const { clock, connect } = memoryPair()
+    const { dialer, acceptor } = await connect()
+    const accepted = acceptor.acceptStream()
+    const opened = dialer.openStream()
+    let stream: import('../src/index.js').UdxStream | undefined
+    void accepted.then(s => { stream = s })
+    await runUntil(clock, () => stream !== undefined, 5_000)
+    expect(stream).toBeDefined()
+    const got = collect(opened)
+    stream?.write(Uint8Array.of(9))
+    stream?.end()
+    await runUntil(clock, () => got.ended())
+    expect(Array.from(got.bytes())).toEqual([9])
+  })
 })
 
 describe('flow control', () => {
