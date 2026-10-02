@@ -11,7 +11,7 @@ vectors generated from go-udx.
 | [go-udx](../../go-udx/README.md) | v0.1.3 and later | Earlier v3 releases work, but don't acknowledge PINGs, so `conn.ping()` always resolves `false` |
 | [dart_udx](../../dart-udx/README.md) | 3.1.0 and later | Before 3.1.0, a second stream opened by the Dart side, or a stream opened right after another closed, can get mixed up |
 | [go-libp2p-udx-transport](../../go-libp2p-udx-transport/README.md) | v0.1.4 and later | Built on go-udx v0.1.3 |
-| [dart-libp2p](https://pub.dev/packages/dart_libp2p) | 3.0.0 and later | Earlier releases miss the end of a stream that js-libp2p ends with a FIN on a Yamux window update, and can crash when js-libp2p aborts a connection |
+| [dart-libp2p](../../dart-libp2p/doc/index.md) | 3.0.0 and later | Earlier releases miss the end of a stream that js-libp2p ends with a FIN on a Yamux window update, and can crash when js-libp2p aborts a connection |
 
 UDX v2 and earlier don't interoperate with v3. js-udx answers a packet on
 another version with a version negotiation packet, and a js-udx dialer that
