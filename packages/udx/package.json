@@ -1,0 +1,23 @@
+{
+  "name": "@stephanfeb/udx",
+  "version": "0.0.0",
+  "description": "UDX (wire v3) reliable, multiplexed UDP transport for Node.js",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run --root ../.. --project udx"
+  }
+}

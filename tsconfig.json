@@ -1,0 +1,15 @@
+{
+  // Editor and typecheck config covering sources and tests. Builds use the
+  // per-package tsconfigs via `tsc -b`.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "paths": {
+      "@stephanfeb/udx": ["./packages/udx/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src", "packages/*/test", "vitest.config.ts"]
+}

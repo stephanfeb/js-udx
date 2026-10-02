@@ -1,0 +1,29 @@
+{
+  "name": "js-udx-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/udx",
+    "packages/libp2p-udx"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b packages/udx packages/libp2p-udx",
+    "clean": "tsc -b --clean packages/udx packages/libp2p-udx",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "ci": "npm run typecheck && npm run build && npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.19.0",
+    "eslint": "^10.11.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^4.0.0"
+  }
+}
