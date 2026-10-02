@@ -101,4 +101,9 @@ skipped when the toolchain or the sibling repo is missing.
 suites against js-udx through `tools/bulk-peer`.
 
 `packages/libp2p-udx/test/compliance.test.ts` runs js-libp2p's transport
-compliance suite. `UDX_SLOW_TESTS=1` adds a 45 s idle keep-alive test.
+compliance suite. `packages/libp2p-udx/test/interop.test.ts` runs js-libp2p
+against go-libp2p (`tools/go-libp2p-peer`, on go-libp2p-udx-transport) and
+dart-libp2p (`tools/dart-libp2p-peer`) in both directions: Noise, Yamux, ping,
+identify and a 1 MiB echo. It needs `../go-udx`, `../go-libp2p-udx-transport`,
+`../dart-udx` and `../dart-libp2p`, and skips what's missing.
+`UDX_SLOW_TESTS=1` adds 45 s idle keep-alive tests.

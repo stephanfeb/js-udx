@@ -7,3 +7,4 @@ coverage/
 # Dart interop peer
 .dart_tool/
 tools/dart-peer/pubspec.lock
+tools/dart-libp2p-peer/pubspec.lock

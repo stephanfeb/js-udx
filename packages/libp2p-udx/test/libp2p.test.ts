@@ -4,7 +4,6 @@ import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
 import { identify } from '@libp2p/identify'
 import { ping } from '@libp2p/ping'
-import { echo } from '@libp2p/utils'
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr'
 import { createLibp2p, type Libp2p } from 'libp2p'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -21,7 +20,7 @@ async function node (init?: UdxTransportInit): Promise<Libp2p<{ ping: ReturnType
     streamMuxers: [yamux()],
     services: { ping: ping(), identify: identify() }
   })
-  await n.handle(ECHO, async (stream: Stream) => { await echo(stream) })
+  await n.handle(ECHO, echo)
   return n
 }
 
@@ -29,6 +28,16 @@ function addr (n: Libp2p): Multiaddr {
   const ma = n.getMultiaddrs()[0]
   if (ma === undefined) throw new Error('not listening')
   return ma
+}
+
+/**
+ * Echoes until the remote ends, then ends. Not @libp2p/utils' echo(): it
+ * pauses for backpressure, and a paused stream's iterator stops at the
+ * remote's FIN with data still buffered, which is lost (jsudx-bh8).
+ */
+async function echo (stream: Stream): Promise<void> {
+  for await (const buf of stream) stream.send(buf)
+  await stream.close()
 }
 
 function pattern (n: number, seed = 0): Uint8Array {

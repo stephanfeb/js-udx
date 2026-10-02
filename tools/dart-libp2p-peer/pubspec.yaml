@@ -1,0 +1,19 @@
+name: udx_js_interop_dartlibp2p
+description: >-
+  dart-libp2p host over UDX for js-udx's libp2p interop tests. Same CLI and
+  stderr protocol as tools/go-libp2p-peer.
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  dart_libp2p:
+    path: ../../../dart-libp2p
+  dart_udx: ^3.1.0
+
+dependency_overrides:
+  # dart-libp2p's own override doesn't apply to its dependents.
+  dart_udx:
+    path: ../../../dart-udx
