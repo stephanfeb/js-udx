@@ -77,6 +77,22 @@ Implement them, but keep Go interop intact:
 - **PMTUD**: binary search 1280–1500; must not raise payload beyond what Go's 1600-byte receive buffer accepts.
 - **Migration / stateless reset / NEW_CONNECTION_ID**: implement per Dart; Go ignores these frames.
 
+## Deliberate deviations from go-udx (sender-side only, nothing on the wire)
+
+- **RTO** = SRTT + max(4·RTTVAR, 1 ms) + 25 ms (RFC 9002 PTO), initial RTT 333 ms.
+  go-udx uses SRTT + 4·RTTVAR from an initial 100 ms. That resends the whole first
+  flight on paths with RTT ≥ 300 ms. On steady paths with RTT above the 200 ms
+  floor it also resends every delayed-ACK packet, because RTTVAR decays to 0 and
+  the RTO collapses onto the RTT. Found by the simulated-link tests (Phase 2).
+- **One retransmission timer per connection**, armed at the earliest packet
+  deadline, rather than one Go timer per packet.
+- **A collapsed RTO keeps its timer.** When a packet's timer fires within an RTO
+  of a SACK-driven resend, go-udx drops that packet's timer, leaving it to SACK
+  alone. js-udx re-arms it at lastRetransmit + RTO.
+- **Not ported (dead in go-udx):** the congestion controller's PTO probe timer
+  (nil callback) and duplicate-ACK fast retransmit. Per-packet RTO and SACK loss
+  detection cover both.
+
 ## Phases
 
 0. **Scaffold** — workspaces, tsconfig, vitest, lint, CI script.
@@ -103,6 +119,11 @@ Implement them, but keep Go interop intact:
    identify, echo, ping.
 
 ## Upstream issues found (not in scope here)
+- go-udx RTO omits max_ack_delay and starts from a 100 ms RTT (see deviations above).
+- go-udx drops a packet's retransmit timer when it collapses into a recent resend.
+- go-udx's initial ssthresh of 65535 ends slow start at 64 KiB. In the simulation a
+  1 MiB transfer over a clean 300 ms path tops out near 85 KB of cwnd. Worth
+  revisiting for high-BDP links; js-udx keeps Go's value for now.
 - Dart frame enum numbering diverges from Go for 0x0c–0x11.
 - `go-udx/cmd/interop-server` stamps version 2 on replies (dropped by v3 peers); Dart raw interop test asserts v2.
 - `go-udx/doc/PENDING_WORK.md` §5 says Dart uses UDX streams as the libp2p muxer; dart-libp2p's swarm actually always upgrades over one stream.
