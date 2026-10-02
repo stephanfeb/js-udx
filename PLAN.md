@@ -118,6 +118,28 @@ history. That is harmless but uses some of the 5 range slots.
   (nil callback) and duplicate-ACK fast retransmit. Per-packet RTO and SACK loss
   detection cover both.
 
+## Status and next steps (2026-10-02)
+
+Done: Phases 0–4 (scaffold, codec, reliability engine, connection/stream/multiplexer,
+Dart parity). `npm run ci` = typecheck + build + lint + 273 tests, including
+go-udx interop over real UDP (`tools/go-peer`, built from `../go-udx`).
+Upstream fixes merged to `main` locally (not pushed) in dart-udx and go-udx.
+
+Next, in order:
+1. **jsudx-4ge** — go-udx: ACK PINGs sent under a nonzero sequence (branch in
+   `../go-udx`, merge locally, don't push). Then flip the two js-udx Go-interop
+   assertions (ping → true; PMTUD rises to 1472 against Go).
+2. **Phase 5 (jsudx-rdx.6)** — Dart side first: JS↔dart-udx interop. Known
+   Dart limits to expect: streams opened *by JS* to Dart collide on Dart's local
+   id 0 beyond the first (dartudx-4u8), and Dart ACKs carry no SACK history so
+   JS recovers loss to Dart by RTO only (dartudx-by0).
+3. **Phase 6** — libp2p transport. Open design item: idle timeout (30 s) vs
+   yamux keep-alive; go-udx doesn't ACK PINGs (until jsudx-4ge lands).
+
+Practical notes: `dart test … | tail` hides the exit code — check with
+`-r json` or `set -o pipefail`. Running go-udx's interop suite rewrites
+`interop/dartpeer/pubspec.lock`; restore it.
+
 ## Phases
 
 0. **Scaffold** — workspaces, tsconfig, vitest, lint, CI script.
