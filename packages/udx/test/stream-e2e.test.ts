@@ -272,13 +272,16 @@ describe('connection lifecycle', () => {
     const pending = acceptor.acceptStream().catch(e => e as Error)
     let dialerErr: ConnectionClosedError | undefined
     dialer.on('close', e => { dialerErr = e })
-    const sent = net.sent
+    let closes = 0
+    net.onSend = (data) => {
+      if (decodePacket(data).frames.some(f => f.type === FrameType.ConnectionClose)) closes++
+    }
     await advance(clock, 31_000)
     expect(dialer.closed).toBe(true)
     expect(acceptor.closed).toBe(true)
     expect(dialerErr?.code).toBe(ErrorCode.ConnectionTimeout)
     expect(await pending).toBeInstanceOf(ConnectionClosedError)
-    expect(net.sent).toBe(sent) // silent: nothing was sent
+    expect(closes).toBe(0) // silent: no CONNECTION_CLOSE
   })
 
   it('keeps a connection alive while packets arrive', async () => {
@@ -398,8 +401,9 @@ describe('go-udx stream rules', () => {
     const { send, received, clock } = await rawPeer()
     send([{ type: FrameType.PathChallenge, data: Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8) }], 0, 0)
     send([{ type: FrameType.DataBlocked, limit: 100 }], 0, 0)
-    await runUntil(clock, () => received.some(p => p.frames.some(f => f.type === FrameType.MaxData)))
-    const resp = received.flatMap(p => p.frames).find(f => f.type === FrameType.PathResponse)
+    const frames = (): import('../src/index.js').Frame[] => received.flatMap(p => p.frames)
+    await runUntil(clock, () => frames().some(f => f.type === FrameType.PathResponse) && frames().filter(f => f.type === FrameType.MaxData).length >= 2)
+    const resp = frames().find(f => f.type === FrameType.PathResponse)
     expect(resp).toMatchObject({ data: Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8) })
   })
 })

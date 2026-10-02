@@ -103,3 +103,28 @@ function readCid (data: Uint8Array, offset: number, which: string): [ConnectionI
   if (start + len > data.length) throw new CodecError('too-short', `packet too short: ${which} CID data`)
   return [new ConnectionId(data.subarray(start, start + len)), start + len]
 }
+
+/** The fields a datagram's header gives before its frames are parsed. */
+export interface PacketHeader {
+  version: number
+  destinationCid: ConnectionId
+  sourceCid: ConnectionId
+}
+
+/**
+ * Reads the version and connection IDs without parsing frames, or returns
+ * undefined if even those don't fit. Works for any version, and for version
+ * negotiation packets (version 0), whose header ends after the source CID.
+ */
+export function peekHeader (data: Uint8Array): PacketHeader | undefined {
+  if (data.length < 6) return undefined
+  const dcidLen = data[4] as number
+  if (dcidLen > MAX_CID_LENGTH || 5 + dcidLen >= data.length) return undefined
+  const scidLen = data[5 + dcidLen] as number
+  if (scidLen > MAX_CID_LENGTH || 6 + dcidLen + scidLen > data.length) return undefined
+  return {
+    version: view(data).getUint32(0),
+    destinationCid: new ConnectionId(data.subarray(5, 5 + dcidLen)),
+    sourceCid: new ConnectionId(data.subarray(6 + dcidLen, 6 + dcidLen + scidLen))
+  }
+}

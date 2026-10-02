@@ -116,22 +116,34 @@ export class StreamFlowController {
 }
 
 /**
- * Connection-level flow control (go-udx FlowController). go-udx tracks MAX_DATA
- * but does not enforce it, and nor does this yet. It answers DATA_BLOCKED with
- * the current MAX_DATA, as go-udx does.
+ * Connection-level flow control with dart-udx's semantics: MAX_DATA bounds
+ * the bytes a sender has in flight (sent and not yet acknowledged), not the
+ * cumulative bytes sent as in QUIC. dart-udx enforces it that way and
+ * advertises a fixed 1 MiB. go-udx tracks MAX_DATA but never enforces it.
+ * Enforcing a QUIC-style cumulative limit would stall against go-udx, which
+ * never raises it.
  */
 export class ConnectionFlowController {
-  private connMaxData: number
+  private peerMax: number
+  /** What we advertise: how much the peer may have in flight to us. */
+  readonly localMaxData: number
 
-  constructor (initialMaxData: number) {
-    this.connMaxData = initialMaxData
+  constructor (initialPeerMaxData: number, localMaxData: number) {
+    this.peerMax = initialPeerMaxData
+    this.localMaxData = localMaxData
   }
 
-  get maxData (): number {
-    return this.connMaxData
+  /** The peer's limit on our bytes in flight. */
+  get peerMaxData (): number {
+    return this.peerMax
   }
 
-  updateMaxData (maxData: number): void {
-    if (maxData > this.connMaxData) this.connMaxData = maxData
+  canSend (inflight: number, n: number): boolean {
+    return inflight + n <= this.peerMax
+  }
+
+  /** Applies a MAX_DATA from the peer; the limit only rises. */
+  updatePeerMaxData (maxData: number): void {
+    if (maxData > this.peerMax) this.peerMax = maxData
   }
 }

@@ -31,7 +31,10 @@ export const ErrorCode = {
 
 // --- Transport parameters (go-udx constants.go). Durations are milliseconds. ---
 
+/** The peer's in-flight limit until it says otherwise (dart-udx's fixed advertisement). */
 export const INITIAL_MAX_DATA = 1024 * 1024
+/** The in-flight limit we advertise; per-stream windows bound the actual buffering. */
+export const LOCAL_MAX_DATA = 16 * 1024 * 1024
 export const INITIAL_MAX_STREAM_DATA = 65536
 export const MAX_STREAM_RECV_WINDOW = 4 * 1024 * 1024
 /** Out-of-order receive backstop; above the largest window so legitimate transfers never trip it. */
@@ -99,4 +102,11 @@ export const LOSS_TIMER_GRANULARITY = 1
 
 export const MIN_MTU = 1280
 export const MAX_MTU = 1500
+/** Largest UDP payload in a 1500-byte IPv4 / IPv6 packet. */
+export const MAX_UDP_PAYLOAD_IPV4 = MAX_MTU - 20 - 8
+export const MAX_UDP_PAYLOAD_IPV6 = MAX_MTU - 40 - 8
 export const AMPLIFICATION_FACTOR = 3
+/** How long a path challenge waits for its response. */
+export const PATH_VALIDATION_TIMEOUT = 5000
+/** Stream-ID budget we advertise in MAX_STREAMS: the incoming streams we keep open at once. */
+export const MAX_INCOMING_STREAMS = 1024

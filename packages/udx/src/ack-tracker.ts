@@ -127,3 +127,15 @@ export class AckTracker {
     return { type: FrameType.Ack, largestAcked: this.largestSeq, ackDelay, firstAckRangeLength, ranges }
   }
 }
+
+/** Whether an ACK frame acknowledges `seq` (go-udx's range encoding: raw counts). */
+export function ackCovers (frame: AckFrame, seq: number): boolean {
+  if (seq <= frame.largestAcked && frame.largestAcked - seq < frame.firstAckRangeLength) return true
+  let cursor = frame.largestAcked - frame.firstAckRangeLength
+  for (const r of frame.ranges) {
+    const end = cursor - r.gap
+    if (seq <= end && end - seq < r.length) return true
+    cursor = end - r.length
+  }
+  return false
+}

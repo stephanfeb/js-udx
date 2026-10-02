@@ -57,13 +57,24 @@ describe.skipIf(unavailable !== undefined)('interop with go-udx', () => {
     it('echoes 4 MiB on one stream', async () => { await echo(4 << 20, 1) }, 60_000)
     it('echoes 512 KiB on each of 8 concurrent streams', async () => { await echo(512 << 10, 8) }, 60_000)
     it('echoes an empty stream', async () => { await echo(0, 1) }, 30_000)
+
+    // go-udx never acknowledges PINGs, so probes and pings go unanswered: the
+    // datagram size stays at go-udx's own, and ping() reports false.
+    it('keeps the go-udx datagram size and survives unanswered probes', async () => {
+      await new Promise(resolve => setTimeout(resolve, 4000))
+      expect(conn.datagramSize).toBe(1418)
+      expect(await conn.ping(500)).toBe(false)
+      await echo(100_000, 1)
+    }, 30_000)
   })
 
   describe('go-udx dials a JS listener', () => {
     let mux: UdxMultiplexer
+    const accepted: UdxConnection[] = []
     beforeAll(async () => {
       mux = await UdxMultiplexer.create({ host: '127.0.0.1' })
       mux.on('connection', conn => {
+        accepted.push(conn)
         conn.on('stream', s => {
           s.on('data', d => {
             if (!s.write(d)) {
@@ -86,6 +97,8 @@ describe.skipIf(unavailable !== undefined)('interop with go-udx', () => {
       try {
         const result = await peer.line('RESULT', 60_000)
         expect(Number(result)).toBe(size * streams)
+        // go-udx answered our PATH_CHALLENGE, lifting the amplification limit.
+        expect(accepted.at(-1)?.addressValidated).toBe(true)
       } finally {
         peer.kill()
       }

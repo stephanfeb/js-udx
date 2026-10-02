@@ -19,3 +19,5 @@ export { UdxConnection, type UdxConnectionEvents, type UdxConnectionOptions, STR
 export { UdxMultiplexer, type UdxMultiplexerEvents, type UdxMultiplexerOptions, listen, dial } from './multiplexer.js'
 export { bindUdp, type DatagramSocket, type BindOptions, type RemoteInfo, type SocketAddress } from './datagram.js'
 export { MemoryNetwork, type LinkConditions, seededRandom } from './memory-network.js'
+export { ackCovers } from './ack-tracker.js'
+export { PmtuSearch } from './pmtud.js'

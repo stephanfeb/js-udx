@@ -1,12 +1,16 @@
 import { EventEmitter } from 'node:events'
 import { ConnectionId } from './cid.js'
 import { type Clock, type TimerHandle, realClock } from './clock.js'
-import { DEFAULT_CID_LENGTH, ErrorCode, VERSION_CURRENT } from './constants.js'
+import { isIPv6 } from 'node:net'
+import { toHex } from './bytes.js'
+import { DEFAULT_CID_LENGTH, ErrorCode, MAX_UDP_PAYLOAD_IPV4, MAX_UDP_PAYLOAD_IPV6, MIN_STATELESS_RESET_PACKET_SIZE, VERSION_CURRENT } from './constants.js'
 import { UdxConnection } from './connection.js'
 import { type BindOptions, type DatagramSocket, type RemoteInfo, type SocketAddress, bindUdp } from './datagram.js'
 import { ConnectionClosedError } from './errors.js'
 import { FrameType } from './frames.js'
-import { type Packet, decodePacket } from './packet.js'
+import { type Packet, type PacketHeader, decodePacket, peekHeader } from './packet.js'
+import { candidateResetToken, encodeStatelessReset, statelessResetToken } from './stateless-reset.js'
+import { decodeVersionNegotiation, encodeVersionNegotiation } from './version.js'
 import type { UdxStreamOptions } from './stream.js'
 
 /** Packets for an unknown connection ID held while its SYN may still be on the way. */
@@ -14,10 +18,33 @@ const EARLY_MAX_CIDS = 256
 const EARLY_MAX_PACKETS_PER_CID = 32
 /** How long early packets are held before being discarded. go-udx never expires them. */
 const EARLY_PACKET_TTL = 10_000
+/**
+ * A connection ID still without a SYN after this long is taken to be one we
+ * lost (a restart), and answered with a stateless reset. Shorter would reset
+ * connections whose SYN is merely slow: its first retransmission comes after
+ * about 1 s, the second 2 s later.
+ */
+const STATELESS_RESET_AFTER = 3_000
+/** Most version negotiation and stateless reset replies sent per second. */
+const STATELESS_REPLIES_PER_SECOND = 10
 
 export interface UdxMultiplexerOptions {
   clock?: Clock
   streamOptions?: UdxStreamOptions
+  /** See UdxConnectionOptions. Defaults: all true. */
+  antiAmplification?: boolean
+  migration?: boolean
+  pmtud?: boolean
+  /** Answer packets with an unsupported version with a version negotiation packet. Default true. */
+  versionNegotiation?: boolean
+  /**
+   * Enables stateless reset (RFC 9000 §10.3): each connection tells its peer
+   * a token derived from this secret, and packets for connection IDs this
+   * multiplexer doesn't know are answered with a reset, so peers of a
+   * restarted process learn at once that their connection is gone. Must be at
+   * least 32 bytes and survive restarts to be useful.
+   */
+  statelessResetSecret?: Uint8Array
 }
 
 export interface UdxMultiplexerEvents {
@@ -41,6 +68,13 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
   readonly clock: Clock
   private readonly socket: DatagramSocket
   private readonly streamOptions: UdxStreamOptions | undefined
+  private readonly connOptions: Pick<UdxMultiplexerOptions, 'antiAmplification' | 'migration' | 'pmtud'>
+  private readonly versionNegotiation: boolean
+  private readonly resetSecret: Uint8Array | undefined
+  /** Peers' stateless reset tokens (hex) → the connection they would reset. */
+  private readonly resetTokens = new Map<string, UdxConnection>()
+  private replyBudget = STATELESS_REPLIES_PER_SECOND
+  private replyBudgetAt = 0
   private readonly connections = new Map<string, UdxConnection>()
   private readonly early = new Map<string, EarlyPackets>()
   private readonly backlog: UdxConnection[] = []
@@ -56,6 +90,10 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
     this.socket = socket
     this.clock = opts.clock ?? realClock
     this.streamOptions = opts.streamOptions
+    this.connOptions = { antiAmplification: opts.antiAmplification, migration: opts.migration, pmtud: opts.pmtud }
+    this.versionNegotiation = opts.versionNegotiation ?? true
+    if (opts.statelessResetSecret !== undefined) statelessResetToken(opts.statelessResetSecret, ConnectionId.EMPTY) // validates the length
+    this.resetSecret = opts.statelessResetSecret
     socket.onMessage((data, from) => this.onDatagram(data, from))
   }
 
@@ -116,6 +154,7 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
 
   private createConnection (localCid: ConnectionId, remoteCid: ConnectionId, address: string, port: number, initiator: boolean): UdxConnection {
     const key = localCid.key
+    const tokens: string[] = []
     const conn = new UdxConnection({
       localCid,
       remoteCid,
@@ -126,8 +165,17 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
       send: (data, toAddress, toPort) => this.socket.send(data, toPort, toAddress),
       onClosed: () => {
         if (this.connections.get(key) === conn) this.connections.delete(key)
+        for (const t of tokens) if (this.resetTokens.get(t) === conn) this.resetTokens.delete(t)
       },
-      streamOptions: this.streamOptions
+      onResetToken: (token) => {
+        const t = toHex(token)
+        tokens.push(t)
+        this.resetTokens.set(t, conn)
+      },
+      resetToken: this.resetSecret !== undefined ? statelessResetToken(this.resetSecret, localCid) : undefined,
+      streamOptions: this.streamOptions,
+      ...this.connOptions,
+      maxDatagramSize: isIPv6(address) ? MAX_UDP_PAYLOAD_IPV6 : MAX_UDP_PAYLOAD_IPV4
     })
     this.connections.set(key, conn)
     return conn
@@ -135,30 +183,40 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
 
   private onDatagram (data: Uint8Array, from: RemoteInfo): void {
     if (this.closedFlag) return
-    let pkt: Packet
-    try {
-      pkt = decodePacket(data)
-    } catch {
-      this.droppedDatagrams++
+    const header = peekHeader(data)
+    if (header === undefined) {
+      this.unroutable(data)
+      return
+    }
+    if (header.version === 0) {
+      this.onVersionNegotiation(header, data)
       return
     }
     // A version mismatch is dropped, so it looks like an unreachable peer
     // rather than corrupting data: v3 moved bytes a v2 parser would misread.
-    if (pkt.version !== VERSION_CURRENT) {
-      this.droppedDatagrams++
+    if (header.version !== VERSION_CURRENT) {
+      if (!this.unroutable(data)) this.sendVersionNegotiation(header, data, from)
+      return
+    }
+
+    let pkt: Packet
+    try {
+      pkt = decodePacket(data)
+    } catch {
+      this.unroutable(data)
       return
     }
 
     const key = pkt.destinationCid.key
     const conn = this.connections.get(key)
     if (conn !== undefined) {
-      conn.handlePacket(pkt, data.length)
+      conn.handlePacket(pkt, data.length, from.address, from.port)
       return
     }
 
     const hasSyn = pkt.frames.some(f => f.type === FrameType.Stream && f.syn)
     if (!hasSyn) {
-      this.holdEarly(key, pkt, data.length)
+      if (!this.unroutable(data)) this.holdEarly(key, pkt, data, from)
       return
     }
 
@@ -166,8 +224,9 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
     const inbound = this.createConnection(pkt.destinationCid, pkt.sourceCid, from.address, from.port, false)
     const early = this.early.get(key)
     this.early.delete(key)
-    inbound.handlePacket(pkt, data.length)
-    for (const e of early?.packets ?? []) inbound.handlePacket(e.pkt, e.size)
+    inbound.handlePacket(pkt, data.length, from.address, from.port)
+    inbound.start()
+    for (const e of early?.packets ?? []) inbound.handlePacket(e.pkt, e.size, from.address, from.port)
 
     const waiter = this.acceptWaiters.shift()
     if (waiter !== undefined) {
@@ -178,16 +237,92 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
     this.emit('connection', inbound)
   }
 
-  /** Holds a packet that may have overtaken its connection's SYN. */
-  private holdEarly (key: string, pkt: Packet, size: number): void {
+  /**
+   * A datagram that can't be routed to a connection may be a stateless reset
+   * from a peer that lost our connection: its last 16 bytes match a token
+   * the peer gave us. Returns true if it was one.
+   */
+  private unroutable (data: Uint8Array): boolean {
+    this.droppedDatagrams++
+    if (this.resetTokens.size === 0) return false
+    const token = candidateResetToken(data)
+    if (token === undefined) return false
+    const conn = this.resetTokens.get(toHex(token))
+    if (conn === undefined) return false
+    conn.onStatelessReset()
+    return true
+  }
+
+  /** A version negotiation packet: the peer can't speak our version. */
+  private onVersionNegotiation (header: PacketHeader, data: Uint8Array): void {
+    const conn = this.connections.get(header.destinationCid.key)
+    if (conn === undefined) {
+      this.unroutable(data)
+      return
+    }
+    try {
+      conn.onVersionNegotiation(decodeVersionNegotiation(data).supportedVersions)
+    } catch {
+      this.droppedDatagrams++
+    }
+  }
+
+  /**
+   * Tells a peer speaking another version which one we speak. Only for
+   * connection IDs we don't know, never larger than the packet that prompted
+   * it (so it can't amplify), and rate-limited.
+   */
+  private sendVersionNegotiation (header: PacketHeader, data: Uint8Array, from: RemoteInfo): void {
+    if (!this.versionNegotiation || this.connections.has(header.destinationCid.key)) return
+    const reply = encodeVersionNegotiation({
+      destinationCid: header.sourceCid,
+      sourceCid: header.destinationCid,
+      // Only the version we can parse; go-udx and dart-udx also list 2 and 1.
+      supportedVersions: [VERSION_CURRENT]
+    })
+    if (reply.length > data.length || !this.takeReplyBudget()) return
+    this.socket.send(reply, from.port, from.address)
+  }
+
+  private takeReplyBudget (): boolean {
+    const now = this.clock.now()
+    if (now - this.replyBudgetAt >= 1000) {
+      this.replyBudget = STATELESS_REPLIES_PER_SECOND
+      this.replyBudgetAt = now
+    }
+    if (this.replyBudget <= 0) return false
+    this.replyBudget--
+    return true
+  }
+
+  /**
+   * Holds a packet that may have overtaken its connection's SYN. If its
+   * connection ID has gone unclaimed for a while, it is more likely one we
+   * lost, and with stateless reset enabled the sender is told so.
+   */
+  private holdEarly (key: string, pkt: Packet, data: Uint8Array, from: RemoteInfo): void {
+    const now = this.clock.now()
     let entry = this.early.get(key)
     if (entry === undefined) {
       if (this.early.size >= EARLY_MAX_CIDS) return
-      entry = { firstSeen: this.clock.now(), packets: [] }
+      entry = { firstSeen: now, packets: [] }
       this.early.set(key, entry)
       this.armSweep()
     }
-    if (entry.packets.length < EARLY_MAX_PACKETS_PER_CID) entry.packets.push({ pkt, size })
+    if (entry.packets.length < EARLY_MAX_PACKETS_PER_CID) entry.packets.push({ pkt, size: data.length })
+    if (this.resetSecret !== undefined && now - entry.firstSeen >= STATELESS_RESET_AFTER) {
+      this.sendStatelessReset(pkt.destinationCid, data.length, from)
+    }
+  }
+
+  /** Smaller than the packet that prompted it, so two endpoints can't loop. */
+  private sendStatelessReset (cid: ConnectionId, triggerSize: number, from: RemoteInfo): void {
+    if (this.resetSecret === undefined || triggerSize <= MIN_STATELESS_RESET_PACKET_SIZE || !this.takeReplyBudget()) return
+    const token = statelessResetToken(this.resetSecret, cid)
+    const size = Math.max(MIN_STATELESS_RESET_PACKET_SIZE, Math.min(triggerSize - 1, 64))
+    const reset = encodeStatelessReset(token, size)
+    reset[0] = (reset[0] as number) | 0x80 // never reads as version 0–3
+    this.socket.send(reset, from.port, from.address)
   }
 
   private armSweep (): void {

@@ -41,6 +41,13 @@ stream starts paused and flows once it has a `'data'` listener, is iterated, or
 stream pushes back on the sender. One `UdxMultiplexer` socket can both accept
 and dial any number of connections, routed by connection ID.
 
+Beyond go-udx's feature set, connections also do path MTU discovery,
+anti-amplification on accepted connections, path migration (following a
+peer's NAT rebinding), connection-level flow control and acknowledged pings.
+Multiplexers do version negotiation and, given a `statelessResetSecret`,
+stateless reset. Each can be turned off in the multiplexer options. See
+PLAN.md for how they interoperate with go-udx and dart-udx.
+
 ## Development
 
 ```sh

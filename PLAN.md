@@ -68,14 +68,27 @@ ACK ranges are raw counts (not QUIC minus-one): `cursor = L − first`; per rang
 - CUBIC: initial cwnd 14720, min 2944, ssthresh 65535, β 0.7, C 0.4, MSS 1472. Pacing 2.88·cwnd/minRTT.
 - Payload per STREAM frame: 1372 bytes (Go). Receive buffer ≥ 1600.
 
-### Parity vs Go (features Go declares but doesn't wire)
-Implement them, but keep Go interop intact:
-- **Version negotiation**: reply to an unsupported version pre-handshake (Go drops version-0 packets, harmless).
-- **Anti-amplification**: server side only, until the address is validated (Dart behaviour).
-- **Connection flow control**: send MAX_DATA as Dart does; enforce on send only if the peer
-  advertises MAX_DATA (Go does — 1 MiB, replies to DATA_BLOCKED). Verify against Go before enabling by default.
-- **PMTUD**: binary search 1280–1500; must not raise payload beyond what Go's 1600-byte receive buffer accepts.
-- **Migration / stateless reset / NEW_CONNECTION_ID**: implement per Dart; Go ignores these frames.
+### Parity features (Phase 4): what was built and why it differs from Dart
+
+dart-udx implements all six, but several don't work there, so js-udx follows
+the intent and keeps both peers' wire behaviour working:
+
+| Feature | js-udx | dart-udx | go-udx |
+|---|---|---|---|
+| Version negotiation | Answers an unknown version for an unknown CID (never larger than the request, ≤10/s), advertising only v3. A dialer answered without v3 before hearing from the peer closes. | Answers pre-handshake, advertises [3,2,1] | Format only |
+| Anti-amplification | Acceptor sends ≤3× received until a PATH_CHALLENGE it sent is answered (Go and Dart both answer). Retried a few times; a late answer still validates. Option `antiAmplification`. | Validates on the 2nd packet or 1000 bytes, which proves nothing | Disabled |
+| Path migration | Packets from a new address → PATH_CHALLENGE there; move (and restart PMTUD) when it answers. `migrate` event. | Same | Never follows the peer |
+| PMTUD | Binary search from go-udx's size (1418 with 8-byte CIDs) up to 1472 (v4) / 1452 (v6). Probes are PING + MTU_PROBE under a fresh, nonzero, untracked sequence. | Probes are MTU_PROBE only, which Dart never ACKs, so it never rises | Not wired |
+| Connection flow control | MAX_DATA caps bytes **in flight** (Dart's meaning), 1 MiB until the peer says more. We advertise 16 MiB in the SYN (reliable) or the acceptor's first packet, send DATA_BLOCKED at most once per RTO, and answer it with our MAX_DATA. | In-flight cap, fixed 1 MiB | Tracked, not enforced |
+| Stateless reset | Opt-in `statelessResetSecret`. Tokens sent in NEW_CONNECTION_ID; packets for a CID unclaimed for 3 s get a reset (smaller than the trigger, rate-limited). | API only, tokens never exchanged | None |
+
+PING rule: a packet with a PING under a nonzero sequence is acknowledged at
+once (Dart's `ping()` expects that; it makes probes and our own `ping()` work).
+go-udx sends PINGs as sequence 0, and those stay unacknowledged.
+
+Against Go peers, probe and ping sequences leave holes in Go's ACK tracker, so
+its ACKs carry an extra SACK range until the holes age out of its 512-sequence
+history. That is harmless but uses some of the 5 range slots.
 
 ## Deliberate deviations from go-udx (sender-side only, nothing on the wire)
 
@@ -131,6 +144,10 @@ Implement them, but keep Go interop intact:
    identify, echo, ping.
 
 ## Upstream issues found (not in scope here)
+- dart-udx PMTUD probes carry only MTU_PROBE, which dart-udx itself never acknowledges, so its PMTUD never raises the MTU.
+- dart-udx `ping()` against go-udx always fails: go-udx never acknowledges PINGs.
+- dart-udx anti-amplification validates on the second packet (or 1000 bytes), which proves nothing about the address.
+- dart-udx sends STOP_SENDING as 0x0c, which go-udx and js-udx reject as an unknown frame (the whole packet is dropped).
 - go-udx RTO omits max_ack_delay and starts from a 100 ms RTT (see deviations above).
 - go-udx drops a packet's retransmit timer when it collapses into a recent resend.
 - `udx.Dial` binds a dual-stack socket, and go-udx's batched send path
