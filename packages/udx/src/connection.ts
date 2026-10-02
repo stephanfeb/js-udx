@@ -77,6 +77,12 @@ export interface UdxConnectionOptions {
   pmtud?: boolean
   /** Largest UDP payload to probe for. Default 1472 (a 1500-byte IPv4 MTU). */
   maxDatagramSize?: number
+  /**
+   * Send a PING after this many milliseconds without hearing from the peer,
+   * so an idle connection outlives the idle timeout at both ends. Default 0
+   * (off): UDX itself doesn't keep idle connections open.
+   */
+  keepAliveInterval?: number
 }
 
 interface PathChallenge {
@@ -131,6 +137,9 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
   private flushScheduled = false
   private pacerTimer: TimerHandle | undefined
   private idleTimer: TimerHandle | undefined
+  private readonly keepAliveInterval: number
+  private keepAlivePending = false
+  private readonly flushWaiters: Array<(flushed: boolean) => void> = []
   private lastActivity: number
   private establishedResolve: (() => void) | undefined
   private isEstablished = false
@@ -182,6 +191,7 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     this.validated = opts.initiator || opts.antiAmplification === false
     this.nextStreamId = opts.initiator ? 1 : 2
     this.lastActivity = this.clock.now()
+    this.keepAliveInterval = opts.keepAliveInterval ?? 0
     this.established = new Promise<void>(resolve => { this.establishedResolve = resolve })
     // Nobody may await it; a close before establishment must not surface as unhandled.
     this.established.catch(() => {})
@@ -242,9 +252,9 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
 
   /**
    * Sends a PING under a fresh sequence and resolves true when the peer
-   * acknowledges it, false on timeout or close. js-udx and dart-udx peers
-   * acknowledge PINGs; go-udx peers never do, so against Go this always
-   * resolves false (the PING still counts as activity at the peer).
+   * acknowledges it, false on timeout or close. go-udx acknowledges PINGs
+   * from its fix/ack-pings on; against an older go-udx this always resolves
+   * false (the PING still counts as activity at the peer).
    */
   async ping (timeoutMs = 5000): Promise<boolean> {
     if (this.closedFlag) return false
@@ -257,6 +267,29 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
       }, timeoutMs)
       this.pings.set(sequence, { resolve, timer })
     })
+  }
+
+  /**
+   * Resolves true once the peer has acknowledged everything written so far,
+   * FINs included, and nothing is left to send; false if the connection
+   * closes first. A graceful close waits for this before CONNECTION_CLOSE,
+   * which would otherwise discard data still in flight.
+   */
+  async flushed (): Promise<boolean> {
+    if (this.closedFlag) return false
+    if (this.isFlushed()) return true
+    return await new Promise<boolean>(resolve => this.flushWaiters.push(resolve))
+  }
+
+  private isFlushed (): boolean {
+    if (this.recovery.congestion.inflight > 0) return false
+    for (const s of this.streams.values()) if (s.hasSendable()) return false
+    return true
+  }
+
+  private checkFlushed (): void {
+    if (this.flushWaiters.length === 0 || !this.isFlushed()) return
+    for (const w of this.flushWaiters.splice(0)) w(true)
   }
 
   /** Closes the connection, telling the peer with CONNECTION_CLOSE. */
@@ -406,6 +439,7 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
 
   private handleAck (frame: AckFrame): void {
     if (this.recovery.onAckFrame(frame) > 0) this.scheduleFlush()
+    this.checkFlushed()
     for (const [seq, ping] of this.pings) {
       if (ackCovers(frame, seq)) {
         this.clock.clearTimeout(ping.timer)
@@ -768,6 +802,11 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
         this.teardown(new ConnectionClosedError(ErrorCode.ConnectionTimeout, 'idle timeout', false))
         return
       }
+      if (this.keepAliveInterval > 0 && !this.keepAlivePending && this.clock.now() - this.lastActivity >= this.keepAliveInterval) {
+        // Its ACK is activity here; its arrival is activity there.
+        this.keepAlivePending = true
+        void this.ping(this.keepAliveInterval).then(() => { this.keepAlivePending = false })
+      }
       this.armIdleCheck()
     }, IDLE_CHECK_INTERVAL)
   }
@@ -791,6 +830,7 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
       ping.resolve(false)
     }
     this.pings.clear()
+    for (const w of this.flushWaiters.splice(0)) w(false)
     this.acks.destroy()
     this.recovery.destroy()
     for (const s of this.streams.values()) s.abort(err)

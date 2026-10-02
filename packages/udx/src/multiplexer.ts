@@ -35,6 +35,8 @@ export interface UdxMultiplexerOptions {
   antiAmplification?: boolean
   migration?: boolean
   pmtud?: boolean
+  /** See UdxConnectionOptions. Default 0 (off). */
+  keepAliveInterval?: number
   /** Answer packets with an unsupported version with a version negotiation packet. Default true. */
   versionNegotiation?: boolean
   /**
@@ -68,7 +70,7 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
   readonly clock: Clock
   private readonly socket: DatagramSocket
   private readonly streamOptions: UdxStreamOptions | undefined
-  private readonly connOptions: Pick<UdxMultiplexerOptions, 'antiAmplification' | 'migration' | 'pmtud'>
+  private readonly connOptions: Pick<UdxMultiplexerOptions, 'antiAmplification' | 'migration' | 'pmtud' | 'keepAliveInterval'>
   private readonly versionNegotiation: boolean
   private readonly resetSecret: Uint8Array | undefined
   /** Peers' stateless reset tokens (hex) → the connection they would reset. */
@@ -90,7 +92,7 @@ export class UdxMultiplexer extends EventEmitter<UdxMultiplexerEvents> {
     this.socket = socket
     this.clock = opts.clock ?? realClock
     this.streamOptions = opts.streamOptions
-    this.connOptions = { antiAmplification: opts.antiAmplification, migration: opts.migration, pmtud: opts.pmtud }
+    this.connOptions = { antiAmplification: opts.antiAmplification, migration: opts.migration, pmtud: opts.pmtud, keepAliveInterval: opts.keepAliveInterval }
     this.versionNegotiation = opts.versionNegotiation ?? true
     if (opts.statelessResetSecret !== undefined) statelessResetToken(opts.statelessResetSecret, ConnectionId.EMPTY) // validates the length
     this.resetSecret = opts.statelessResetSecret

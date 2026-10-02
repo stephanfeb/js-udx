@@ -12,9 +12,12 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc -b",
@@ -22,7 +25,20 @@
   },
   "dependencies": {
     "@libp2p/interface": "^3.3.0",
+    "@libp2p/utils": "^7.4.1",
     "@multiformats/multiaddr": "^13.0.3",
-    "@stephanfeb/udx": "0.0.0"
+    "@multiformats/multiaddr-matcher": "^3.0.2",
+    "@stephanfeb/udx": "0.0.0",
+    "main-event": "^1.0.5",
+    "uint8arraylist": "^3.0.2"
+  },
+  "devDependencies": {
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "@chainsafe/libp2p-yamux": "^8.0.1",
+    "@libp2p/identify": "^4.1.14",
+    "@libp2p/interface-compliance-tests": "^7.0.32",
+    "@libp2p/ping": "^3.1.13",
+    "@libp2p/tcp": "^11.0.28",
+    "libp2p": "^3.3.11"
   }
 }

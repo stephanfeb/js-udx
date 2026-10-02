@@ -314,6 +314,48 @@ describe('connection lifecycle', () => {
     expect(acceptor.closed).toBe(false)
   })
 
+  it('keeps an idle connection open with keepAliveInterval', async () => {
+    const { clock, connect } = memoryPair({ delay: 5 }, 1, { keepAliveInterval: 10_000 })
+    const { dialer, acceptor } = await connect()
+    await advance(clock, 120_000)
+    expect(dialer.closed).toBe(false)
+    expect(acceptor.closed).toBe(false)
+  })
+
+  it('without keepAliveInterval an idle connection times out', async () => {
+    const { clock, connect } = memoryPair()
+    const { dialer } = await connect()
+    await advance(clock, 60_000)
+    expect(dialer.closed).toBe(true)
+  })
+
+  it('flushed() resolves once everything written is acknowledged', async () => {
+    const { clock, connect } = memoryPair({ delay: 20, loss: 0.05 })
+    const { dialer, acceptor } = await connect()
+    let received = 0
+    acceptor.on('stream', s => s.on('data', d => { received += d.length }))
+    const s = dialer.openStream()
+    s.write(pattern(256 << 10))
+    s.end()
+    let flushed: boolean | undefined
+    void dialer.flushed().then(f => { flushed = f })
+    await runUntil(clock, () => flushed !== undefined)
+    expect(flushed).toBe(true)
+    expect(received).toBe(256 << 10)
+    expect(dialer.inflight).toBe(0)
+  })
+
+  it('flushed() resolves false when the connection closes first', async () => {
+    const { clock, net, connect } = memoryPair()
+    const { dialer } = await connect()
+    net.conditions = { delay: 5, loss: 1 }
+    dialer.openStream().write(pattern(1000))
+    let flushed: boolean | undefined
+    void dialer.flushed().then(f => { flushed = f })
+    await runUntil(clock, () => flushed !== undefined)
+    expect(flushed).toBe(false)
+  })
+
   it('a writer on a dead path fails rather than hangs', async () => {
     const { clock, net, connect } = memoryPair()
     const { dialer } = await connect()

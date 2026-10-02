@@ -1,4 +1,4 @@
-import { type LinkConditions, ManualClock, MemoryNetwork, type UdxConnection, UdxMultiplexer, type UdxStream } from '../../src/index.js'
+import { type LinkConditions, ManualClock, MemoryNetwork, type UdxConnection, UdxMultiplexer, type UdxMultiplexerOptions, type UdxStream } from '../../src/index.js'
 
 /** Lets queued microtasks (send flushes, drain events) and immediates run. */
 export async function settle (): Promise<void> {
@@ -41,11 +41,11 @@ export interface Pair {
   connect: () => Promise<{ dialer: UdxConnection, acceptor: UdxConnection }>
 }
 
-export function memoryPair (conditions: LinkConditions = { delay: 5 }, seed = 1): Pair {
+export function memoryPair (conditions: LinkConditions = { delay: 5 }, seed = 1, opts: UdxMultiplexerOptions = {}): Pair {
   const clock = new ManualClock(1_000_000)
   const net = new MemoryNetwork(clock, conditions, seed)
-  const server = new UdxMultiplexer(net.createSocket('10.0.0.1', 9000), { clock })
-  const client = new UdxMultiplexer(net.createSocket('10.0.0.2', 9000), { clock })
+  const server = new UdxMultiplexer(net.createSocket('10.0.0.1', 9000), { ...opts, clock })
+  const client = new UdxMultiplexer(net.createSocket('10.0.0.2', 9000), { ...opts, clock })
   return {
     clock,
     net,
