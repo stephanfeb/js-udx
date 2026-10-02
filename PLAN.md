@@ -144,6 +144,15 @@ history. That is harmless but uses some of the 5 range slots.
    identify, echo, ping.
 
 ## Upstream issues found (not in scope here)
+
+Status 2026-10-02: fixed on branches, not yet merged —
+dart-udx `fix/go-js-interop` (frame numbering + STREAM_DATA_BLOCKED answer,
+ACK gap/range overflow, same-address connections) and go-udx
+`fix/dual-stack-batch-writes` (udx.Dial batched writes). The remaining
+dart-udx items are in dart-udx's beads backlog (`bd ready` there), including
+two found while fixing: streams opened by go-udx/js-udx collide on Dart's
+local id 0 (dartudx-4u8), and Dart ACKs carry no SACK history (dartudx-by0).
+
 - dart-udx PMTUD probes carry only MTU_PROBE, which dart-udx itself never acknowledges, so its PMTUD never raises the MTU.
 - dart-udx `ping()` against go-udx always fails: go-udx never acknowledges PINGs.
 - dart-udx anti-amplification validates on the second packet (or 1000 bytes), which proves nothing about the address.
