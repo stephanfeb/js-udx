@@ -104,8 +104,16 @@ export async function writeAll (stream: UdxStream, data: Uint8Array, opts: { end
   for (let o = 0; o < data.length; o += step) {
     if (!stream.write(data.subarray(o, o + step))) {
       await new Promise<void>((resolve, reject) => {
-        stream.once('drain', resolve)
-        stream.once('close', (e) => reject(e ?? new Error('closed before drain')))
+        const onClose = (e?: Error): void => {
+          stream.off('drain', onDrain)
+          reject(e ?? new Error('closed before drain'))
+        }
+        const onDrain = (): void => {
+          stream.off('close', onClose)
+          resolve()
+        }
+        stream.once('drain', onDrain)
+        stream.once('close', onClose)
       })
     }
   }

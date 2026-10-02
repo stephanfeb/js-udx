@@ -84,11 +84,10 @@ the intent and keeps both peers' wire behaviour working:
 
 PING rule: a packet with a PING under a nonzero sequence is acknowledged at
 once (Dart's `ping()` expects that; it makes probes and our own `ping()` work).
-go-udx sends PINGs as sequence 0, and those stay unacknowledged.
-
-Against Go peers, probe and ping sequences leave holes in Go's ACK tracker, so
-its ACKs carry an extra SACK range until the holes age out of its 512-sequence
-history. That is harmless but uses some of the 5 range slots.
+go-udx sends PINGs as sequence 0, and those stay unacknowledged. go-udx
+applies the same rule since `fix/ack-pings` (jsudx-4ge): it records numbered
+PINGs and probes and ACKs them at once, so our pings succeed, PMTUD rises to
+1472 against Go, and probe sequences leave no holes in Go's ACK ranges.
 
 ## Deliberate deviations from go-udx (sender-side only, nothing on the wire)
 
@@ -125,16 +124,17 @@ Dart parity). `npm run ci` = typecheck + build + lint + 273 tests, including
 go-udx interop over real UDP (`tools/go-peer`, built from `../go-udx`).
 Upstream fixes merged to `main` locally (not pushed) in dart-udx and go-udx.
 
+Also done: **jsudx-4ge** — go-udx ACKs PINGs sent under a nonzero sequence
+(`fix/ack-pings`, merged locally, not pushed); the Go-interop test now expects
+`ping()` → true and PMTUD → 1472.
+
 Next, in order:
-1. **jsudx-4ge** — go-udx: ACK PINGs sent under a nonzero sequence (branch in
-   `../go-udx`, merge locally, don't push). Then flip the two js-udx Go-interop
-   assertions (ping → true; PMTUD rises to 1472 against Go).
-2. **Phase 5 (jsudx-rdx.6)** — Dart side first: JS↔dart-udx interop. Known
+1. **Phase 5 (jsudx-rdx.6)** — Dart side first: JS↔dart-udx interop. Known
    Dart limits to expect: streams opened *by JS* to Dart collide on Dart's local
    id 0 beyond the first (dartudx-4u8), and Dart ACKs carry no SACK history so
    JS recovers loss to Dart by RTO only (dartudx-by0).
-3. **Phase 6** — libp2p transport. Open design item: idle timeout (30 s) vs
-   yamux keep-alive; go-udx doesn't ACK PINGs (until jsudx-4ge lands).
+2. **Phase 6** — libp2p transport. Open design item: idle timeout (30 s) vs
+   yamux keep-alive (UDX `ping()` now works against both Go and Dart peers).
 
 Practical notes: `dart test … | tail` hides the exit code — check with
 `-r json` or `set -o pipefail`. Running go-udx's interop suite rewrites
@@ -176,7 +176,7 @@ two found while fixing: streams opened by go-udx/js-udx collide on Dart's
 local id 0 (dartudx-4u8), and Dart ACKs carry no SACK history (dartudx-by0).
 
 - dart-udx PMTUD probes carry only MTU_PROBE, which dart-udx itself never acknowledges, so its PMTUD never raises the MTU.
-- dart-udx `ping()` against go-udx always fails: go-udx never acknowledges PINGs.
+- ~~dart-udx `ping()` against go-udx always fails: go-udx never acknowledges PINGs.~~ Fixed in go-udx `fix/ack-pings`.
 - dart-udx anti-amplification validates on the second packet (or 1000 bytes), which proves nothing about the address.
 - dart-udx sends STOP_SENDING as 0x0c, which go-udx and js-udx reject as an unknown frame (the whole packet is dropped).
 - go-udx RTO omits max_ack_delay and starts from a 100 ms RTT (see deviations above).
