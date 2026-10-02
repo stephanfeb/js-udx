@@ -89,6 +89,18 @@ Implement them, but keep Go interop intact:
 - **A collapsed RTO keeps its timer.** When a packet's timer fires within an RTO
   of a SACK-driven resend, go-udx drops that packet's timer, leaving it to SACK
   alone. js-udx re-arms it at lastRetransmit + RTO.
+- **Pacing granularity 1 ms.** Packets due within 1 ms go out at once; Node
+  timers can't fire sooner, so pacing to µs intervals would cap throughput.
+- **Received CONNECTION_CLOSE is not answered** (RFC 9000 §10.2.2). go-udx sends
+  one back.
+- **An empty stream's FIN carries SYN**, so the peer opens it and sees EOF.
+  go-udx sends a bare FIN, which the peer drops.
+- **Closed streams stay as tombstones** in the routing maps, so a late
+  retransmission can't reopen them. The stream limit counts only active streams;
+  go-udx counts every stream it ever had, capping a connection at 100 for life.
+  Incoming streams are capped at 1024 active (reset with code 2 beyond that).
+- **Early packets** (arriving before their connection's SYN) expire after 10 s.
+  go-udx keeps them forever.
 - **Not ported (dead in go-udx):** the congestion controller's PTO probe timer
   (nil callback) and duplicate-ACK fast retransmit. Per-packet RTO and SACK loss
   detection cover both.
@@ -121,6 +133,10 @@ Implement them, but keep Go interop intact:
 ## Upstream issues found (not in scope here)
 - go-udx RTO omits max_ack_delay and starts from a 100 ms RTT (see deviations above).
 - go-udx drops a packet's retransmit timer when it collapses into a recent resend.
+- `udx.Dial` binds a dual-stack socket, and go-udx's batched send path
+  (`ipv4.NewPacketConn` + `WriteBatch`) silently drops every multi-datagram write
+  from it to an IPv4 peer; only single sends (SYN, retransmits) arrive. Go→JS
+  1 MiB took 15 s instead of 23 ms. tools/go-peer binds `udp4` explicitly to avoid it.
 - go-udx's initial ssthresh of 65535 ends slow start at 64 KiB. In the simulation a
   1 MiB transfer over a clean 300 ms path tops out near 85 KB of cwnd. Worth
   revisiting for high-BDP links; js-udx keeps Go's value for now.

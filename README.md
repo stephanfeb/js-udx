@@ -12,6 +12,35 @@ no raw UDP.
 Interoperates with [go-udx](../go-udx) and [dart-udx](../dart-udx). go-udx is the wire
 authority. See [PLAN.md](PLAN.md) for the porting plan and the protocol rules.
 
+## Usage
+
+```ts
+import { listen, dial } from '@stephanfeb/udx'
+
+// Server: echo every stream.
+const server = await listen({ host: '127.0.0.1', port: 9000 })
+server.on('connection', conn => {
+  conn.on('stream', stream => {
+    stream.on('data', chunk => stream.write(chunk))
+    stream.on('end', () => stream.end())
+  })
+})
+
+// Client.
+const conn = await dial(9000, '127.0.0.1')
+const stream = conn.openStream()
+stream.write(new TextEncoder().encode('hello'))
+stream.end()
+for await (const chunk of stream) console.log(new TextDecoder().decode(chunk))
+conn.close()
+```
+
+`write` returns false when the send queue is full; wait for `'drain'`. A
+stream starts paused and flows once it has a `'data'` listener, is iterated, or
+`resume()` is called. Only consumed bytes reopen the peer's window, so a paused
+stream pushes back on the sender. One `UdxMultiplexer` socket can both accept
+and dial any number of connections, routed by connection ID.
+
 ## Development
 
 ```sh
@@ -29,3 +58,9 @@ Issues are tracked with beads (`bd ready`).
 `../go-udx`) by `tools/gen-vectors`. The codec tests require byte-identical
 encoding and the same accept/reject verdict on truncated and fuzzed input.
 Regenerate after a go-udx wire change with `npm run vectors` (needs Go).
+
+### Interop tests
+
+`packages/udx/test/go-interop.test.ts` builds `tools/go-peer` against
+`../go-udx` and exchanges data with it in both directions over real UDP. It is
+skipped when Go or `../go-udx` is missing.

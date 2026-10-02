@@ -65,6 +65,12 @@ export const INITIAL_SSTHRESH = 65535
 export const BETA_CUBIC = 0.7
 export const CUBIC_C = 0.4
 export const PACING_GAIN = 2.88
+/**
+ * Packets due within this many ms go out now. Node timers can't fire sooner
+ * than about 1 ms, so pacing to finer intervals would cap the send rate at
+ * one packet per timer tick.
+ */
+export const PACING_GRANULARITY = 1
 
 // --- RTT estimation (RFC 9002 §5) ---
 
