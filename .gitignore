@@ -8,3 +8,10 @@ coverage/
 .dart_tool/
 tools/dart-peer/pubspec.lock
 tools/dart-libp2p-peer/pubspec.lock
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
