@@ -14,9 +14,10 @@ transport with go-libp2p-udx-transport and dart-libp2p. go-udx is the wire
 authority. See [PLAN.md](PLAN.md) for the porting plan and the protocol rules.
 
 **Documentation:** [cryptopeer.net/udx/js](https://cryptopeer.net/udx/js/),
-built from [`doc/`](doc). The packages aren't on npm yet;
-[Getting started](doc/getting-started.md) shows how to install them from
-source. Runnable programs are in [`examples/`](examples).
+built from [`doc/`](doc). Both packages are on npm:
+`npm install @stephanfeb/udx`, or `@stephanfeb/libp2p-udx` for js-libp2p (see
+[Getting started](doc/getting-started.md)). Runnable programs are in
+[`examples/`](examples).
 
 ## libp2p
 

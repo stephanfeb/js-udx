@@ -2,7 +2,27 @@
 
 ## Install
 
-The packages aren't on npm yet, so build and pack them from source:
+Both packages are on npm. For UDX on its own:
+
+```sh
+npm install @stephanfeb/udx
+```
+
+For js-libp2p, install the transport with libp2p, Noise and Yamux. The
+transport brings `@stephanfeb/udx` with it:
+
+```sh
+npm install @stephanfeb/libp2p-udx libp2p @chainsafe/libp2p-noise @chainsafe/libp2p-yamux
+```
+
+Both packages are ES modules with TypeScript types. `@stephanfeb/udx` needs
+Node.js 20 or later, and `@stephanfeb/libp2p-udx` needs Node.js 22, as
+js-libp2p v3 does.
+
+### From source
+
+To try changes that aren't released yet, build and pack the packages from a
+checkout, and install the tarballs:
 
 ```sh
 git clone https://github.com/stephanfeb/js-udx.git
@@ -10,25 +30,14 @@ cd js-udx
 npm install
 npm run build
 npm pack -w packages/udx -w packages/libp2p-udx --pack-destination ~/js-udx-packages
-```
-
-Then install the tarballs into your project. You need
-`@stephanfeb/libp2p-udx` only if you use js-libp2p, and it needs
-`@stephanfeb/udx` installed with it:
-
-```sh
 cd your-project
-npm install ~/js-udx-packages/stephanfeb-udx-0.0.0.tgz
-npm install ~/js-udx-packages/stephanfeb-libp2p-udx-0.0.0.tgz
+npm install ~/js-udx-packages/stephanfeb-udx-*.tgz ~/js-udx-packages/stephanfeb-libp2p-udx-*.tgz
 ```
 
 Install the tarballs, not the package directories. npm links a directory
 instead of copying it, so the transport would load its own copy of
 `@multiformats/multiaddr` from the js-udx checkout. js-libp2p then can't
 parse `/udx` addresses (`Protocol udx was unknown`).
-
-Both packages are ES modules with TypeScript types. `@stephanfeb/udx` needs
-Node.js 20 or later, and `@stephanfeb/libp2p-udx` needs Node.js 22.
 
 ## An echo server and client
 
@@ -67,8 +76,10 @@ await server.close()
 ```
 <!-- /example -->
 
-It prints `hello, udx`. On Node.js 22.18 or later you can run TypeScript
-directly: from the js-udx checkout, `node examples/echo.ts`.
+It prints `hello, udx`. Save it as `echo.mjs` in a project where you
+installed `@stephanfeb/udx` and run `node echo.mjs`; it is plain JavaScript as
+well as TypeScript. On Node.js 22.18 or later you can also run it from a
+js-udx checkout as `node examples/echo.ts`.
 
 What happens:
 

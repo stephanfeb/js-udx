@@ -13,6 +13,11 @@ vectors generated from go-udx.
 | [go-libp2p-udx-transport](../../go-libp2p-udx-transport/README.md) | v0.1.4 and later | Built on go-udx v0.1.3 |
 | [dart-libp2p](../../dart-libp2p/doc/index.md) | 3.0.0 and later | Earlier releases miss the end of a stream that js-libp2p ends with a FIN on a Yamux window update, and can crash when js-libp2p aborts a connection |
 
+Use go-udx v0.3.0 and dart_udx 4.3.0 or later where you can. Together with
+js-udx 0.1.0 they start at 1200-byte datagrams, which every path carries, and
+recover from loss the same way (RFC 9002). Older peers still connect, but may
+send datagrams that some mobile networks drop.
+
 UDX v2 and earlier don't interoperate with v3. js-udx answers a packet on
 another version with a version negotiation packet, and a js-udx dialer that
 gets one before the peer has answered gives up at once instead of timing out.

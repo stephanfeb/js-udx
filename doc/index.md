@@ -15,8 +15,14 @@ js-udx runs on Node.js only: browsers can't send raw UDP.
 | `@stephanfeb/udx` | The protocol: connections, streams, reliability, congestion and flow control. No libp2p dependency. | ≥ 20 |
 | `@stephanfeb/libp2p-udx` | A js-libp2p transport for `/ip4/<ip>/udp/<port>/udx` and `/ip6/…` addresses. | ≥ 22 (js-libp2p v3 needs it) |
 
-The packages aren't on npm yet. [Getting started](getting-started.md) shows
-how to build them from source and use them in your project.
+Both are on npm:
+
+```sh
+npm install @stephanfeb/udx
+```
+
+[Getting started](getting-started.md) has the js-libp2p install and a first
+program.
 
 ## What you get
 
@@ -35,7 +41,7 @@ how to build them from source and use them in your project.
 
 ## Guides
 
-- [Getting started](getting-started.md): build the packages and run an echo server and client.
+- [Getting started](getting-started.md): install the packages and run an echo server and client.
 - [Streams](streams.md): writing with backpressure, reading, half-close, resets.
 - [Connections](connections.md): dialing and listening, multiplexers, options, closing, errors.
 - [js-libp2p transport](libp2p.md): using UDX in a js-libp2p node.
