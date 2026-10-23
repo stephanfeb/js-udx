@@ -1,38 +1,41 @@
-// Port of go-udx packet_manager_test.go, retransmit_recovery_test.go and the
-// detector-level cases of loss_detection_test.go.
+// Port of go-udx v0.3.0 packet_manager_test.go and the detector-level cases
+// of loss_detection_test.go: loss declared from ACKs (RFC 9002 §6.1), never
+// from a per-packet timer.
 import { describe, expect, it } from 'vitest'
 import {
   CongestionController,
   FrameType,
   LOSS_REORDER_THRESHOLD,
   LOSS_TIMER_GRANULARITY,
-  MAX_RETRANSMIT_BACKOFF,
   ManualClock,
   type SentPacket,
   SentPacketManager
 } from '../src/index.js'
 
-function setup (rtt?: number): { pm: SentPacketManager, cc: CongestionController, clock: ManualClock, resent: Array<[SentPacket, number]> } {
+function setup (rtt?: number): { pm: SentPacketManager, cc: CongestionController, clock: ManualClock, lost: SentPacket[][] } {
   const clock = new ManualClock(100_000)
   const cc = new CongestionController(clock, () => -1)
   if (rtt !== undefined) cc.onPacketsAcked(1200, clock.now() - rtt, 0, 1)
-  const resent: Array<[SentPacket, number]> = []
-  const pm = new SentPacketManager({ clock, congestion: cc, onRetransmit: (p, s) => resent.push([p, s]) })
-  return { pm, cc, clock, resent }
+  const lost: SentPacket[][] = []
+  const pm = new SentPacketManager({ clock, congestion: cc, onLost: (l) => lost.push(l) })
+  return { pm, cc, clock, lost }
 }
 
-function send (pm: SentPacketManager, size = 100, sequence = pm.nextSequence()): SentPacket {
+function send (pm: SentPacketManager, size = 100, sequence = pm.nextSequence(), probe = false): SentPacket {
   return pm.onPacketSent({
     sequence,
     size,
     frames: [{ type: FrameType.Stream, fin: false, syn: false, offset: 0, data: new Uint8Array(1) }],
     destinationStreamId: 2,
-    sourceStreamId: 1
+    sourceStreamId: 1,
+    probe
   })
 }
 
 const ack = (largestAcked: number, firstAckRangeLength: number, ranges: Array<{ gap: number, length: number }> = []) =>
   ({ type: FrameType.Ack, largestAcked, ackDelay: 0, firstAckRangeLength, ranges }) as const
+
+const seqs = (pkts: SentPacket[]): number[] => pkts.map(p => p.sequence)
 
 describe('SentPacketManager: tracking and ACKs', () => {
   it('numbers from 0 and records the last sent', () => {
@@ -57,7 +60,7 @@ describe('SentPacketManager: tracking and ACKs', () => {
     const acked = pm.onAckFrame(ack(pkt.sequence, 1))
     expect(acked.map(p => [p.sequence, p.size])).toEqual([[0, 1000]])
     expect(pm.pendingCount).toBe(0)
-    expect(pm.timerArmed).toBe(false)
+    expect(pkt.acked).toBe(true)
   })
 
   it('acknowledges across SACK ranges', () => {
@@ -95,188 +98,142 @@ describe('SentPacketManager: tracking and ACKs', () => {
 })
 
 describe('SentPacketManager: loss detection', () => {
-  it('declares gaps lost once far enough behind', () => {
-    const { pm } = setup()
+  it('declares lost what is three or more behind the largest acknowledged', () => {
+    const { pm, lost } = setup(50)
     for (let i = 0; i < 10; i++) send(pm)
-    const lost = pm.detectLost(ack(9, 5, [{ gap: 2, length: 3 }]))
-    expect(lost.map(p => p.sequence).sort()).toEqual([3, 4])
+    pm.onAckFrame(ack(9, 1))
+    expect(seqs(pm.detectLost())).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(lost).toHaveLength(1)
+    expect(pm.pendingCount).toBe(2) // 7 and 8 wait on the time threshold
   })
 
-  it('declares nothing without SACK ranges', () => {
-    const { pm } = setup()
-    send(pm)
-    expect(pm.detectLost(ack(0, 1))).toEqual([])
-  })
-
-  it('honours the reorder threshold', () => {
+  it('judges every outstanding packet below the largest acknowledged, gaps reported or not', () => {
     const { pm } = setup(50)
-    for (let i = 0; i < 10; i++) send(pm)
-    const lost = pm.detectLost(ack(9, 2, [{ gap: 4, length: 1 }]))
-    expect(lost.length).toBeGreaterThan(0)
-    for (const p of lost) expect(9 - p.sequence).toBeGreaterThanOrEqual(LOSS_REORDER_THRESHOLD)
-    expect(lost.map(p => p.sequence)).not.toContain(7)
+    for (let i = 0; i < 6; i++) send(pm)
+    // A receiver that acknowledges one packet at a time sends no ranges.
+    pm.onAckFrame(ack(5, 1))
+    expect(seqs(pm.detectLost())).toEqual([0, 1, 2])
   })
 
-  it('catches a packet too close to trip the threshold once it is old', () => {
-    const { pm, clock } = setup(50)
-    for (let i = 0; i < 4; i++) send(pm)
-    expect(pm.detectLost(ack(3, 1, [{ gap: 1, length: 2 }]))).toEqual([])
-    clock.advance(pm.lossDelay())
-    expect(pm.detectLost(ack(3, 1, [{ gap: 1, length: 2 }])).map(p => p.sequence)).toEqual([2])
+  it('honours the reorder threshold, then the loss timer catches what stays behind', () => {
+    const { pm, clock, lost } = setup(80)
+    for (let i = 0; i < 3; i++) send(pm)
+    pm.onAckFrame(ack(2, 1))
+    expect(pm.detectLost()).toEqual([]) // 0 and 1 are fewer than three behind
+    expect(LOSS_REORDER_THRESHOLD).toBe(3)
+    expect(pm.lossTimerArmed).toBe(true)
+    clock.advance(pm.lossDelay() - 1)
+    expect(lost).toHaveLength(0)
+    clock.advance(1)
+    expect(lost.map(seqs)).toEqual([[0, 1]])
+    expect(pm.lossTimerArmed).toBe(false)
   })
 
-  it('skips a packet retransmitted within the last RTO', () => {
-    const { pm, clock } = setup()
+  it('declares nothing before anything is acknowledged', () => {
+    const { pm } = setup(50)
     for (let i = 0; i < 5; i++) send(pm)
-    const p2 = pm.get(2) as SentPacket
-    p2.retransmitCount = 1
-    p2.lastRetransmit = clock.now()
-    const frame = ack(4, 2, [{ gap: 1, length: 2 }])
-    expect(pm.detectLost(frame)).toEqual([])
-    clock.skip(6000)
-    expect(pm.detectLost(frame).map(p => p.sequence)).toEqual([2])
+    expect(pm.detectLost()).toEqual([])
+    expect(pm.lossTimerArmed).toBe(false)
+  })
+
+  it('never judges packets above the largest acknowledged', () => {
+    const { pm, clock } = setup(50)
+    for (let i = 0; i < 5; i++) send(pm)
+    pm.onAckFrame(ack(1, 1))
+    clock.skip(10_000)
+    expect(seqs(pm.detectLost())).toEqual([0])
+    expect(pm.pendingCount).toBe(3)
   })
 
   it('bases the loss delay on the larger of smoothed and latest RTT', () => {
-    const { pm, cc, clock } = setup(20)
-    const smoothed = cc.smoothedRtt
-    cc.onPacketsAcked(1200, clock.now() - 400, 0, 2)
-    expect(cc.latestRtt).toBeGreaterThan(smoothed)
-    expect(pm.lossDelay()).toBe(cc.latestRtt * 9 / 8)
+    const { pm, cc, clock } = setup(100)
+    const sent = clock.now()
+    cc.onPacketSent(100)
+    clock.advance(400)
+    cc.onPacketsAcked(100, sent, 0, 2)
+    expect(cc.latestRtt).toBe(400)
+    expect(pm.lossDelay()).toBe(400 * 9 / 8)
   })
 
   it('floors the loss delay', () => {
-    const { pm, clock } = setup()
-    const cc = (pm as unknown as { cc: CongestionController }).cc
-    cc.onPacketsAcked(0, clock.now(), 0, 0) // a zero RTT sample
-    expect(pm.lossDelay()).toBeGreaterThanOrEqual(LOSS_TIMER_GRANULARITY)
+    const { pm } = setup(0)
+    expect(pm.lossDelay()).toBe(LOSS_TIMER_GRANULARITY)
+  })
+
+  it('remembers the ACK before the one that revealed a loss', () => {
+    const { pm, clock } = setup(50)
+    for (let i = 0; i < 6; i++) send(pm)
+    expect(pm.ackBeforeLoss).toBeUndefined()
+    pm.onAckFrame(ack(1, 1))
+    const first = clock.now()
+    clock.advance(30)
+    pm.onAckFrame(ack(5, 1))
+    expect(pm.ackBeforeLoss).toBe(first)
   })
 })
 
-describe('SentPacketManager: retransmission', () => {
-  it('re-keys under a fresh sequence', () => {
+describe('SentPacketManager: re-sending', () => {
+  it('moves a packet to a fresh sequence and restarts its send time, keeping the first', () => {
+    const { pm, clock } = setup()
+    const pkt = send(pm)
+    const first = pkt.sentTime
+    clock.advance(30)
+    const fresh = pm.resend(pkt)
+    expect(fresh).toBe(1)
+    expect(pkt.sequence).toBe(1)
+    expect(pkt.retransmitCount).toBe(1)
+    expect(pkt.sentTime).toBe(first + 30)
+    expect(pkt.firstSentTime).toBe(first)
+    expect(pm.get(0)).toBeUndefined()
+    expect(pm.get(1)).toBe(pkt)
+    expect(pm.lastSentSequence).toBe(1)
+  })
+
+  it('tracks a lost packet again under its new number', () => {
+    const { pm } = setup(50)
+    for (let i = 0; i < 5; i++) send(pm)
+    pm.onAckFrame(ack(4, 1))
+    const [lost] = pm.detectLost()
+    expect(pm.get(0)).toBeUndefined()
+    expect(pm.resend(lost as SentPacket)).toBe(5)
+    expect(pm.get(5)).toBe(lost)
+  })
+
+  it('refuses an acknowledged packet and a path-MTU probe', () => {
     const { pm } = setup()
     const pkt = send(pm)
-    const seq = pkt.sequence
-    const fresh = pm.retransmit(pkt)
-    expect(fresh).toBeDefined()
-    expect(fresh).not.toBe(seq)
-    expect(pkt.sequence).toBe(fresh)
-    expect(pm.get(seq)).toBeUndefined()
-    expect(pm.get(fresh as number)).toBe(pkt)
-    expect(pkt.retransmitCount).toBe(1)
+    const probe = send(pm, 1472, pm.nextSequence(), true)
+    pm.onAckFrame(ack(0, 1))
+    expect(pm.resend(pkt)).toBeUndefined()
+    expect(pm.resend(probe)).toBeUndefined()
   })
 
-  it('restarts the send time', () => {
-    const { pm, clock } = setup()
-    const pkt = send(pm)
-    const original = pkt.sentTime
-    clock.skip(pm.retransmitTimeout() / 2)
-    pm.retransmit(pkt)
-    expect(pkt.sentTime).toBeGreaterThan(original)
-    expect(pkt.sentTime).toBe(clock.now())
-  })
-
-  it('collapses triggers within an RTO into one resend', () => {
-    const { pm, clock } = setup()
-    const pkt = send(pm)
-    expect(pm.retransmit(pkt)).toBeDefined()
-    expect(pm.retransmit(pkt)).toBeUndefined()
-    clock.skip(pm.retransmitTimeout())
-    expect(pm.retransmit(pkt)).toBeDefined()
-  })
-
-  it('does nothing for an acknowledged packet and leaves no timer behind', () => {
-    const { pm, clock } = setup()
-    const pkt = send(pm)
-    pm.onAckFrame(ack(pkt.sequence, 1))
-    expect(pm.retransmit(pkt)).toBeUndefined()
-    expect(clock.pending).toBe(0)
-  })
-
-  it('backs off exponentially, saturating at the cap but never below the RTO', () => {
-    const fast = setup().pm
-    const rto = fast.retransmitTimeout()
-    let prev = 0
-    for (let attempt = 1; attempt <= 20; attempt++) {
-      const b = fast.retransmitBackoff(attempt)
-      expect(b).toBeLessThanOrEqual(MAX_RETRANSMIT_BACKOFF)
-      expect(b).toBeGreaterThanOrEqual(rto)
-      expect(b).toBeGreaterThanOrEqual(prev)
-      prev = b
-    }
-    expect(prev).toBe(MAX_RETRANSMIT_BACKOFF)
-
-    const slow = setup(3000).pm
-    const slowRto = slow.retransmitTimeout()
-    expect(slowRto).toBeGreaterThan(MAX_RETRANSMIT_BACKOFF)
-    for (let attempt = 1; attempt <= 20; attempt++) expect(slow.retransmitBackoff(attempt)).toBeGreaterThanOrEqual(slowRto)
-  })
-
-  it('retransmits on the RTO timer with fresh sequences and growing backoff, without a retry cap', () => {
-    const { pm, clock, resent } = setup(20) // RTO at the 200 ms floor
-    const pkt = send(pm)
-    const rto = pm.retransmitTimeout()
-    clock.advance(rto - 1)
-    expect(resent).toHaveLength(0)
-    clock.advance(1)
-    expect(resent.map(([, s]) => s)).toEqual([1])
-
-    const times: number[] = []
-    let last = clock.now()
-    while (resent.length < 15) {
-      const before = resent.length
-      clock.runUntil(clock.nextDeadline() as number)
-      if (resent.length > before) {
-        times.push(clock.now() - last)
-        last = clock.now()
-      }
-    }
-    // Attempt k waits rto·2^(k−1): the timer armed by the first resend waits one RTO.
-    expect(times.slice(0, 3)).toEqual([rto, rto * 2, rto * 4])
-    expect(times.at(-1)).toBe(MAX_RETRANSMIT_BACKOFF)
-    expect(new Set(resent.map(([, s]) => s)).size).toBe(resent.length)
-    expect(pkt.retransmitCount).toBe(15)
-    expect(pm.pendingCount).toBe(1)
-  })
-
-  it('stops the timer once the retransmission is acknowledged', () => {
-    const { pm, clock, resent } = setup()
+  it('hands the oldest outstanding packets to a PTO, probes left out', () => {
+    const { pm } = setup()
     send(pm)
-    clock.advance(pm.retransmitTimeout())
-    const [[pkt, seq]] = resent as [[SentPacket, number]]
-    pm.onAckFrame(ack(seq, 1))
-    expect(pkt.sequence).toBe(seq)
-    expect(clock.pending).toBe(0)
-    clock.advance(60_000)
-    expect(resent).toHaveLength(1)
+    send(pm, 1472, pm.nextSequence(), true)
+    send(pm)
+    send(pm)
+    expect(seqs(pm.oldestUnacked(2))).toEqual([0, 2])
+    const oldest = pm.oldestUnacked(1)[0] as SentPacket
+    pm.resend(oldest)
+    expect(seqs(pm.oldestUnacked(2))).toEqual([2, 3])
   })
 
-  // go-udx stops a packet's timer when the timer collapses into a recent resend,
-  // which happens when the RTO grows between a resend and its timer. The packet
-  // then depends on SACK alone. Here the timer is re-armed for the new RTO.
-  it('keeps timer coverage when the RTO grows between a resend and its timer', () => {
-    const { pm, cc, clock, resent } = setup()
+  it('drops a packet that was re-chunked', () => {
+    const { pm } = setup()
     const pkt = send(pm)
-    clock.advance(pm.retransmitTimeout())
-    expect(resent).toHaveLength(1)
-    const resentAt = clock.now()
-    const firstBackoff = pm.retransmitBackoff(1)
-
-    cc.onPacketsAcked(0, clock.now() - 2000, 0, 99) // a slow RTT sample raises the RTO
-    expect(pm.retransmitTimeout()).toBeGreaterThan(firstBackoff)
-
-    clock.advance(firstBackoff) // the old deadline: collapsed, not resent
-    expect(resent).toHaveLength(1)
-    expect(clock.nextDeadline()).toBe(resentAt + pm.retransmitTimeout())
-    clock.runUntil(resentAt + pm.retransmitTimeout())
-    expect(resent).toHaveLength(2)
-    expect(pkt.retransmitCount).toBe(2)
+    pm.drop(pkt)
+    expect(pm.pendingCount).toBe(0)
   })
 
-  it('arms one timer however many packets are outstanding', () => {
-    const { pm, clock } = setup()
-    for (let i = 0; i < 100; i++) send(pm)
-    expect(clock.pending).toBe(1)
+  it('stops the loss timer on destroy', () => {
+    const { pm, clock } = setup(50)
+    for (let i = 0; i < 3; i++) send(pm)
+    pm.onAckFrame(ack(2, 1))
+    pm.detectLost()
+    expect(pm.lossTimerArmed).toBe(true)
+    pm.destroy()
+    expect(clock.pending).toBe(0)
   })
 })

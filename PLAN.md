@@ -50,11 +50,18 @@ ACK ranges are raw counts (not QUIC minus-one): `cursor = L − first`; per rang
 ### Protocol rules that bite
 - Only data-bearing packets (STREAM with data, SYN or FIN) consume a sequence number,
   are tracked, retransmitted and ACKed. All control packets go out with seq 0 and are never ACKed.
-- Retransmit = same frames under a **fresh** seq; tracking re-keyed, sentTime reset, no
-  inflight re-charge, **no retry cap**. Idle timeout (max(30 s, 3×RTO), silent close, code 6) ends dead paths.
+- Re-send = same frames under a **fresh** seq; tracking re-keyed, sentTime reset (firstSentTime
+  kept), **no retry cap**. Idle timeout (max(30 s, 3×PTO), silent close, code 6) ends dead paths.
+  (Path-MTU probes are also numbered and tracked, but never re-sent and never in flight.)
 - ACK immediately on out-of-order, SYN/FIN, or ≥2 pending; else after clamp(SRTT/4, 1 ms, 25 ms).
-- Loss: gap seq is lost if `largest − seq ≥ 3` or age ≥ max(SRTT, latestRTT)×9/8; skip if resent within last RTO.
-- RTO = SRTT + 4·RTTVAR clamped [200, 5000] ms (initial 300); backoff min(rto·2^(k−1), max(2 s, rto)).
+- Loss (RFC 9002 §6.1, go-udx v0.3.0): after each ACK, every outstanding packet below the largest
+  acknowledged is lost if `largest − seq ≥ 3` or age ≥ max(SRTT, latestRTT)×9/8; a loss timer
+  catches the rest. Lost packets leave flight, cut the window once per epoch and are re-sent
+  through the window and the pacer before new data. Loss spanning 3 PTOs with no ACK since the
+  oldest went out (judged on the ACK before the revealing one) is persistent congestion: cwnd = min.
+- PTO = SRTT + max(4·RTTVAR, 1 ms) + 25 ms, no floor or cap, initial RTT 333/166.5 ms; one timer
+  per connection from the last data send, doubling per expiry until an ACK; each expiry re-sends the
+  2 oldest outstanding packets as probes (window and flight untouched).
 - Connection setup: dialer picks both 8-byte CIDs, sends STREAM{SYN} on stream ids 0/0, seq 0.
   Acceptor creates the connection on an unknown DCID carrying SYN (localCid = pkt.dcid). No-SYN
   packets for unknown CIDs are buffered (256 CIDs × 32 packets).
@@ -65,8 +72,12 @@ ACK ranges are raw counts (not QUIC minus-one): `cursor = L − first`; per rang
 - Stream flow control: windows start 64 KiB, receiver doubles up to 4 MiB when credit < window/2,
   anchored to bytes **consumed**. Sender reconstructs the 64-bit limit nearest its current one mod 2^32.
   Blocked sender sends STREAM_DATA_BLOCKED every 500 ms (WINDOW_UPDATE is not retransmitted).
-- CUBIC: initial cwnd 14720, min 2944, ssthresh 65535, β 0.7, C 0.4, MSS 1472. Pacing 2.88·cwnd/minRTT.
-- Payload per STREAM frame: 1372 bytes (Go). Receive buffer ≥ 1600.
+- CUBIC: initial cwnd 14720, min 2944, ssthresh ∞ (slow start until the first loss), β 0.7, C 0.4,
+  MSS 1472. RTT per RFC 9002 §5.3: first sample as measured; later ones less the ACK delay only if
+  that stays ≥ min RTT. Pacing: budget pacer at gain·cwnd/SRTT (2 in slow start, 1.25 after), burst
+  max(10 datagrams, 2 ms of rate), recomputed on every ACK once there is a sample.
+- Datagrams start at 1200 bytes (SAFE_DATAGRAM_SIZE) and PMTUD raises them; a STREAM frame fills
+  the datagram (size − header − 12). Receive buffer ≥ 1600.
 
 ### Parity features (Phase 4): what was built and why it differs from Dart
 
@@ -78,7 +89,7 @@ the intent and keeps both peers' wire behaviour working:
 | Version negotiation | Answers an unknown version for an unknown CID (never larger than the request, ≤10/s), advertising only v3. A dialer answered without v3 before hearing from the peer closes. | Answers pre-handshake, advertises [3,2,1] | Format only |
 | Anti-amplification | Acceptor sends ≤3× received until a PATH_CHALLENGE it sent is answered (Go and Dart both answer). Retried a few times; a late answer still validates. Option `antiAmplification`. | Validates on the 2nd packet or 1000 bytes, which proves nothing | Disabled |
 | Path migration | Packets from a new address → PATH_CHALLENGE there; move (and restart PMTUD) when it answers. `migrate` event. | Same | Never follows the peer |
-| PMTUD | Binary search from go-udx's size (1418 with 8-byte CIDs) up to 1472 (v4) / 1452 (v6). Probes are PING + MTU_PROBE under a fresh, nonzero, untracked sequence. | Probes are MTU_PROBE only, which Dart never ACKs, so it never rises | Not wired |
+| PMTUD | DPLPMTUD as go-udx v0.3.0 / dart-udx 4.3.0: from 1200 up to 1472 (v4) / 1452 (v6), first probe the maximum, 3 losses rule a size out, done within 16 bytes. Probes are PING + MTU_PROBE under a fresh, nonzero sequence, tracked so ACKs and loss detection report on them, never re-sent, not in flight. Black hole (3 full-size data losses with none acked, or 3 PTOs in a row) → back to 1200, re-sends re-chunked, retry after 1 min. | Same (4.3.0) | Same (v0.3.0) |
 | Connection flow control | MAX_DATA caps bytes **in flight** (Dart's meaning), 1 MiB until the peer says more. We advertise 16 MiB in the SYN (reliable) or the acceptor's first packet, send DATA_BLOCKED at most once per RTO, and answer it with our MAX_DATA. | In-flight cap, fixed 1 MiB | Tracked, not enforced |
 | Stateless reset | Opt-in `statelessResetSecret`. Tokens sent in NEW_CONNECTION_ID; packets for a CID unclaimed for 3 s get a reset (smaller than the trigger, rate-limited). | API only, tokens never exchanged | None |
 
@@ -91,18 +102,12 @@ PINGs and probes and ACKs them at once, so our pings succeed, PMTUD rises to
 
 ## Deliberate deviations from go-udx (sender-side only, nothing on the wire)
 
-- **RTO** = SRTT + max(4·RTTVAR, 1 ms) + 25 ms (RFC 9002 PTO), initial RTT 333 ms.
-  go-udx uses SRTT + 4·RTTVAR from an initial 100 ms. That resends the whole first
-  flight on paths with RTT ≥ 300 ms. On steady paths with RTT above the 200 ms
-  floor it also resends every delayed-ACK packet, because RTTVAR decays to 0 and
-  the RTO collapses onto the RTT. Found by the simulated-link tests (Phase 2).
-- **One retransmission timer per connection**, armed at the earliest packet
-  deadline, rather than one Go timer per packet.
-- **A collapsed RTO keeps its timer.** When a packet's timer fires within an RTO
-  of a SACK-driven resend, go-udx drops that packet's timer, leaving it to SACK
-  alone. js-udx re-arms it at lastRetransmit + RTO.
-- **Pacing granularity 1 ms.** Packets due within 1 ms go out at once; Node
-  timers can't fire sooner, so pacing to µs intervals would cap throughput.
+- Loss recovery, the PTO, RTT estimation, pacing and PMTUD match go-udx v0.3.0
+  and dart-udx 4.3.0 since 2026-10-23 (jsudx-ebv). Before that js-udx had its own
+  RTO with one deadline per packet; the deviations it carried (max_ack_delay in
+  the timeout, initial RTT 333 ms) are now upstream.
+- **Minimum pacing delay 2 ms** (dart-udx's; go-udx uses 1 ms). Node sets timers
+  in whole milliseconds with event-loop jitter, so the burst covers 2 ms of rate.
 - **Received CONNECTION_CLOSE is not answered** (RFC 9000 §10.2.2). go-udx sends
   one back.
 - **An empty stream's FIN carries SYN**, so the peer opens it and sees EOF.
@@ -113,9 +118,8 @@ PINGs and probes and ACKs them at once, so our pings succeed, PMTUD rises to
   Incoming streams are capped at 1024 active (reset with code 2 beyond that).
 - **Early packets** (arriving before their connection's SYN) expire after 10 s.
   go-udx keeps them forever.
-- **Not ported (dead in go-udx):** the congestion controller's PTO probe timer
-  (nil callback) and duplicate-ACK fast retransmit. Per-packet RTO and SACK loss
-  detection cover both.
+- **Not ported:** duplicate-ACK fast retransmit (removed upstream too); ACK-driven
+  loss detection covers it.
 
 ## Status and next steps (2026-10-02)
 
@@ -222,15 +226,19 @@ local id 0 (dartudx-4u8), and Dart ACKs carry no SACK history (dartudx-by0).
 - ~~dart-udx `ping()` against go-udx always fails: go-udx never acknowledges PINGs.~~ Fixed in go-udx `fix/ack-pings`.
 - dart-udx anti-amplification validates on the second packet (or 1000 bytes), which proves nothing about the address.
 - dart-udx sends STOP_SENDING as 0x0c, which go-udx and js-udx reject as an unknown frame (the whole packet is dropped).
-- go-udx RTO omits max_ack_delay and starts from a 100 ms RTT (see deviations above).
-- go-udx drops a packet's retransmit timer when it collapses into a recent resend.
+- ~~go-udx RTO omits max_ack_delay and starts from a 100 ms RTT.~~ Fixed in go-udx v0.3.0.
+- ~~go-udx drops a packet's retransmit timer when it collapses into a recent resend.~~ Per-packet timers are gone in v0.3.0.
 - `udx.Dial` binds a dual-stack socket, and go-udx's batched send path
   (`ipv4.NewPacketConn` + `WriteBatch`) silently drops every multi-datagram write
   from it to an IPv4 peer; only single sends (SYN, retransmits) arrive. Go→JS
   1 MiB took 15 s instead of 23 ms. tools/go-peer binds `udp4` explicitly to avoid it.
-- go-udx's initial ssthresh of 65535 ends slow start at 64 KiB. In the simulation a
-  1 MiB transfer over a clean 300 ms path tops out near 85 KB of cwnd. Worth
-  revisiting for high-BDP links; js-udx keeps Go's value for now.
+- ~~go-udx's initial ssthresh of 65535 ends slow start at 64 KiB.~~ All three stacks start it at infinity
+  since go-udx v0.3.0 / dart-udx 4.3.0 / jsudx-ebv; the simulated clean 1 MiB transfer over 300 ms went
+  from 6.3 s to 2.0 s.
+- Open, all three stacks: under heavy reordering (25% of packets 10 ms late on a 100 ms path, the
+  `mobile` simulation) the loss timer declares reordered packets lost before their ACK arrives, and
+  the window is cut about twice as often as with gap-only detection (35 cuts against 14; 16 s
+  against 10 s for 1 MiB). RFC 9002 §6.1.2 allows an adaptive reorder threshold or time margin.
 - Dart frame enum numbering diverges from Go for 0x0c–0x11.
 - `go-udx/cmd/interop-server` stamps version 2 on replies (dropped by v3 peers); Dart raw interop test asserts v2.
 - `go-udx/doc/PENDING_WORK.md` §5 says Dart uses UDX streams as the libp2p muxer; dart-libp2p's swarm actually always upgrades over one stream.

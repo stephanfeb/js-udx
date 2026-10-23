@@ -1,6 +1,9 @@
 // Port of go-udx flow_control_window_test.go.
 import { describe, expect, it } from 'vitest'
-import { INITIAL_MAX_STREAM_DATA, MAX_STREAM_RECV_WINDOW, STREAM_CHUNK_SIZE, StreamFlowController, reconstructWindowOffset } from '../src/index.js'
+import { INITIAL_MAX_STREAM_DATA, MAX_STREAM_RECV_WINDOW, StreamFlowController, reconstructWindowOffset } from '../src/index.js'
+
+/** A full STREAM frame's payload in a 1472-byte datagram, as go-udx sends. */
+const STREAM_CHUNK_SIZE = 1372
 
 const MOD = 2 ** 32
 const wire = (limit: number): number => limit % MOD

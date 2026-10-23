@@ -11,10 +11,12 @@ import {
   FrameType,
   LOCAL_MAX_DATA,
   MAX_UDP_PAYLOAD_IPV4,
+  MTU_SEARCH_STEP,
   ManualClock,
   MemoryNetwork,
+  MtuDiscovery,
   type Packet,
-  PmtuSearch,
+  SAFE_DATAGRAM_SIZE,
   type UdxConnection,
   UdxMultiplexer,
   type UdxStream,
@@ -146,33 +148,61 @@ describe('path migration', () => {
 })
 
 describe('path MTU discovery', () => {
-  it('raises the datagram size to the largest the path carries', async () => {
+  /** Sends `size` bytes on a fresh stream and waits until the acceptor has them all. */
+  async function transfer (clock: ManualClock, dialer: UdxConnection, acceptor: UdxConnection, size: number): Promise<void> {
+    let received: ReturnType<typeof collect> | undefined
+    acceptor.once('stream', s => { received = collect(s) })
+    const data = pattern(size)
+    void writeAll(dialer.openStream(), data)
+    await runUntil(clock, () => received?.ended() === true)
+    expect(equalBytes(received?.bytes() as Uint8Array, data)).toBe(true)
+  }
+
+  it('starts at the safe size and raises it to the largest the path carries', async () => {
     const { clock, connect } = memoryPair({ delay: 5 })
     const { dialer, acceptor } = await connect()
-    const base = dialer.datagramSize
-    await advance(clock, 10_000)
-    expect(base).toBe(1418)
+    expect(dialer.datagramSize).toBe(SAFE_DATAGRAM_SIZE)
+    // Each side probes once it has an RTT sample, from data it sent.
+    await transfer(clock, dialer, acceptor, 16 << 10)
+    await transfer(clock, acceptor, dialer, 16 << 10)
+    await advance(clock, 1_000)
     expect(dialer.datagramSize).toBe(MAX_UDP_PAYLOAD_IPV4)
     expect(acceptor.datagramSize).toBe(MAX_UDP_PAYLOAD_IPV4)
   })
 
-  it('settles below a smaller path MTU, and sends full-size packets of that size', async () => {
-    const { clock, net, connect } = memoryPair({ delay: 5, mtu: 1450 })
+  it('settles under a smaller path MTU, within the search step, and sends full packets of that size', async () => {
+    const path = 1450
+    const { clock, net, connect } = memoryPair({ delay: 5, mtu: path })
     const { dialer, acceptor } = await connect()
-    let received: ReturnType<typeof collect> | undefined
-    acceptor.on('stream', s => { received = collect(s) })
-    await advance(clock, 30_000)
-    expect(dialer.datagramSize).toBe(1450)
+    // A probe too large for the path is only found lost once later data is
+    // acknowledged: the search follows the traffic.
+    await transfer(clock, dialer, acceptor, 1 << 20)
+    expect(dialer.datagramSize).toBeLessThanOrEqual(path)
+    expect(dialer.datagramSize).toBeGreaterThan(path - MTU_SEARCH_STEP)
 
+    // Data goes out in full packets of the validated size (probes of larger
+    // sizes may still be under test).
     let largest = 0
-    net.onSend = (d) => { largest = Math.max(largest, d.length) }
-    void writeAll(dialer.openStream(), pattern(100_000))
-    await runUntil(clock, () => received?.ended() === true)
-    expect(equalBytes(received?.bytes() as Uint8Array, pattern(100_000))).toBe(true)
-    expect(largest).toBe(1450)
+    net.onSend = (d) => {
+      if (decodePacket(d).frames.some(f => f.type === FrameType.Stream)) largest = Math.max(largest, d.length)
+    }
+    await transfer(clock, dialer, acceptor, 100_000)
+    expect(largest).toBe(dialer.datagramSize)
   })
 
-  it('stays at the base size against a peer that never acknowledges probes', async () => {
+  it('falls back to the safe size when the path shrinks under it, and re-sends what was lost in pieces that fit', async () => {
+    const { clock, net, connect } = memoryPair({ delay: 5 })
+    const { dialer, acceptor } = await connect()
+    await transfer(clock, dialer, acceptor, 256 << 10)
+    expect(dialer.datagramSize).toBe(MAX_UDP_PAYLOAD_IPV4)
+
+    // A carrier's tunnel after a handover: full-size packets vanish.
+    net.conditions = { ...net.conditions, mtu: 1350 }
+    await transfer(clock, dialer, acceptor, 256 << 10)
+    expect(dialer.datagramSize).toBe(SAFE_DATAGRAM_SIZE)
+  })
+
+  it('stays at the safe size against a peer that never acknowledges probes', async () => {
     const clock = new ManualClock(1_000_000)
     const net = new MemoryNetwork(clock, { delay: 5 })
     const server = serverOn(net, clock, { antiAmplification: false })
@@ -189,7 +219,21 @@ describe('path MTU discovery', () => {
     peer.send([{ type: FrameType.Ack, largestAcked: data?.pkt?.sequence ?? 0, ackDelay: 0, firstAckRangeLength: 1, ranges: [] }], { sequence: 0 })
     await advance(clock, 60_000)
     expect(peer.frames().some(f => f.type === FrameType.MtuProbe)).toBe(true)
-    expect(conn?.datagramSize).toBe(1418)
+    expect(conn?.datagramSize).toBe(SAFE_DATAGRAM_SIZE)
+  })
+
+  it('acknowledges a numbered MTU probe without a PING, as go-udx v0.3.0 sends them', async () => {
+    const clock = new ManualClock(1_000_000)
+    const net = new MemoryNetwork(clock, { delay: 5 })
+    serverOn(net, clock, { antiAmplification: false })
+    const peer = rawPeer(net)
+    peer.send([{ type: FrameType.Stream, fin: false, syn: true, offset: 0, data: new Uint8Array(0) }])
+    await advance(clock, 20)
+    const probeSeq = peer.send([{ type: FrameType.MtuProbe, size: 1300 }], { sequence: 41 })
+    void probeSeq
+    await advance(clock, 20)
+    const acks = peer.frames().filter(f => f.type === FrameType.Ack)
+    expect(acks.some(a => ackCovers(a, 41))).toBe(true)
   })
 
   it('can be turned off', async () => {
@@ -201,21 +245,85 @@ describe('path MTU discovery', () => {
     void server
     void dialer.ping()
     await advance(clock, 10_000)
-    expect(dialer.datagramSize).toBe(1418)
+    expect(dialer.datagramSize).toBe(SAFE_DATAGRAM_SIZE)
+  })
+})
+
+describe('MtuDiscovery', () => {
+  /** Runs the search against a path that carries `path` bytes; returns the probes sent. */
+  function search (d: MtuDiscovery, path: number): number[] {
+    const probes: number[] = []
+    for (let size = d.nextProbe(); size !== 0; size = d.nextProbe()) {
+      probes.push(size)
+      if (size <= path) d.onProbeAcked(size)
+      else d.onProbeLost(size)
+    }
+    return probes
+  }
+
+  it('starts at the safe size and validates the maximum in one probe on a full path', () => {
+    const d = new MtuDiscovery(new ManualClock())
+    expect(d.current).toBe(SAFE_DATAGRAM_SIZE)
+    expect(search(d, 1500)).toEqual([MAX_UDP_PAYLOAD_IPV4])
+    expect(d.current).toBe(MAX_UDP_PAYLOAD_IPV4)
+    expect(d.done).toBe(true)
   })
 
-  it('binary-searches between the floor and the bound', () => {
-    const s = new PmtuSearch(1418, 1472)
-    const path = 1450
-    let probes = 0
-    for (let size = s.nextProbe(); size !== undefined; size = s.nextProbe()) {
-      probes++
-      if (size <= path) s.onProbeAcked(size)
-      else s.onProbeLost(size)
-    }
-    expect(s.current).toBe(1450)
-    expect(s.done).toBe(true)
-    expect(probes).toBeLessThanOrEqual(7)
+  it('rules a size out only after three losses, and settles within the step', () => {
+    const d = new MtuDiscovery(new ManualClock())
+    const probes = search(d, 1322)
+    expect(probes.slice(0, 3)).toEqual([1472, 1472, 1472])
+    expect(d.current).toBeLessThanOrEqual(1322)
+    expect(d.current).toBeGreaterThan(1322 - MTU_SEARCH_STEP)
+    expect(d.done).toBe(true)
+  })
+
+  it('probes one size at a time', () => {
+    const d = new MtuDiscovery(new ManualClock())
+    expect(d.nextProbe()).toBe(1472)
+    expect(d.nextProbe()).toBe(0)
+  })
+
+  it('falls back to the safe size after three full-size losses with none acknowledged between', () => {
+    const d = new MtuDiscovery(new ManualClock())
+    search(d, 1500)
+    d.onDataLost(1472)
+    d.onDataLost(1472)
+    d.onDataAcked(1472) // one got through: the count starts over
+    d.onDataLost(1472)
+    d.onDataLost(1472)
+    expect(d.current).toBe(1472)
+    d.onDataLost(1472)
+    expect(d.current).toBe(SAFE_DATAGRAM_SIZE)
+  })
+
+  it('does not count losses of packets no larger than the safe size', () => {
+    const d = new MtuDiscovery(new ManualClock())
+    search(d, 1500)
+    for (let i = 0; i < 10; i++) d.onDataLost(SAFE_DATAGRAM_SIZE)
+    expect(d.current).toBe(1472)
+  })
+
+  it('ignores a stale probe result after a black hole, and searches again a minute later', () => {
+    const clock = new ManualClock()
+    const d = new MtuDiscovery(clock)
+    expect(d.nextProbe()).toBe(1472)
+    d.onProbeAcked(1472)
+    d.blackhole()
+    d.onProbeAcked(1472) // an ACK from before the path shrank
+    expect(d.current).toBe(SAFE_DATAGRAM_SIZE)
+    expect(d.nextProbe()).toBe(0)
+    clock.skip(60_000)
+    expect(d.nextProbe()).toBe(1472)
+  })
+
+  it('starts over from the safe size on reset', () => {
+    const d = new MtuDiscovery(new ManualClock())
+    search(d, 1500)
+    d.reset()
+    expect(d.current).toBe(SAFE_DATAGRAM_SIZE)
+    expect(d.done).toBe(false)
+    expect(d.nextProbe()).toBe(1472)
   })
 })
 

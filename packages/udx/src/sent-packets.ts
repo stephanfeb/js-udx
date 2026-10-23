@@ -2,19 +2,19 @@ import type { Clock, TimerHandle } from './clock.js'
 import {
   LOSS_REORDER_THRESHOLD,
   LOSS_TIME_THRESHOLD,
-  LOSS_TIMER_GRANULARITY,
-  MAX_RETRANSMIT_BACKOFF,
-  MIN_RETRANSMIT_TIMEOUT
+  LOSS_TIMER_GRANULARITY
 } from './constants.js'
 import type { CongestionController } from './congestion.js'
 import type { AckFrame, Frame } from './frames.js'
 
-/** A data-bearing packet awaiting acknowledgement. */
+/** A numbered packet awaiting acknowledgement. */
 export interface SentPacket {
-  /** Current sequence; a retransmission moves the packet to a fresh one. */
+  /** Current sequence; a re-send moves the packet to a fresh one. */
   sequence: number
-  /** When the current sequence was sent. */
+  /** When the packet last went on the wire: the RTT sample and loss detection measure from it. */
   sentTime: number
+  /** When it first did: persistent congestion measures how long the data has gone undelivered. */
+  firstSentTime: number
   /** Encoded datagram size, as charged to the congestion window. */
   size: number
   frames: Frame[]
@@ -22,51 +22,77 @@ export interface SentPacket {
   sourceStreamId: number
   retransmitCount: number
   lastRetransmit: number
-  /** When the retransmission timer next fires for this packet. */
-  deadline: number
+  /**
+   * A path-MTU probe: numbered and tracked so its ACK or loss is reported,
+   * but never re-sent, not in flight, and no congestion signal when lost.
+   */
+  probe: boolean
+  acked: boolean
+}
+
+/** What a caller gives onPacketSent; the rest is filled in. */
+export interface SentPacketInfo {
+  sequence: number
+  size: number
+  frames: Frame[]
+  destinationStreamId: number
+  sourceStreamId: number
+  probe?: boolean
 }
 
 export interface SentPacketManagerOptions {
   clock: Clock
   congestion: CongestionController
   /**
-   * Puts a timer-driven retransmission back on the wire. The packet's sequence
-   * has already been moved to `sequence`.
+   * Told what loss detection declared lost, in sequence order, whether an ACK
+   * or the loss timer revealed it. The packets are no longer tracked: the
+   * receiver re-sends them (resend) and books them.
    */
-  onRetransmit?: (packet: SentPacket, sequence: number) => void
+  onLost?: (lost: SentPacket[]) => void
 }
 
 /**
- * Tracks sent data packets, processes ACKs, detects loss and retransmits.
- * Port of go-udx's PacketManager.
+ * Tracks sent packets, matches ACKs to them, and declares loss the way RFC
+ * 9002 §6.1 does: from acknowledgements, never from a per-packet timer. Port
+ * of go-udx v0.3.0's PacketManager.
  *
- * Retransmission never reuses a sequence number (RFC 9000 §12.3): the packet
- * is re-sent under a fresh one and its tracking moves with it, with no retry
- * cap. Delivery is bounded by the connection's idle timeout instead. Both v3
- * stacks reassemble streams by byte offset, so the receiver discards
- * duplicates.
+ * A packet is lost once a later one has been acknowledged and it is either
+ * LOSS_REORDER_THRESHOLD sequences behind the largest acknowledged or older
+ * than lossDelay() (9/8 of the RTT). Packets behind but not yet old enough
+ * wait on the loss timer, which declares them lost when the delay elapses
+ * without another ACK. Every outstanding packet below the largest
+ * acknowledged is considered, not only those in the frame's gaps: a receiver
+ * that acknowledges one packet at a time sends no gaps, and the ranges an ACK
+ * carries are bounded.
  *
- * Unlike go-udx's one timer per packet, there is one timer for the whole
- * manager, armed at the earliest packet deadline. Thousands of setTimeouts
- * cost more in Node than a scan when the timer fires.
+ * A re-send never reuses a sequence number (RFC 9000 §12.3): the packet goes
+ * out under a fresh one and its tracking moves with it. Both v3 stacks
+ * reassemble streams by byte offset, so the receiver discards duplicates.
+ *
+ * Packets are kept in a Map in send order, which is ascending sequence order:
+ * a re-send deletes the entry and adds it again under a larger number. (Like
+ * go-udx, the comparisons assume the u32 sequence does not wrap within a
+ * connection's outstanding packets.)
  */
 export class SentPacketManager {
   private readonly clock: Clock
   private readonly cc: CongestionController
-  onRetransmit: ((packet: SentPacket, sequence: number) => void) | undefined
+  onLost: ((lost: SentPacket[]) => void) | undefined
 
   private nextSeq = 0
   private lastSentSeq = -1
-  /** Keyed by each packet's current sequence. */
+  /** Keyed by each packet's current sequence, in ascending order. */
   private readonly sent = new Map<number, SentPacket>()
 
-  private timer: TimerHandle | undefined
-  private timerDeadline = Infinity
+  private largestAck = -1
+  private lastAckTime: number | undefined
+  private ackBeforeLossTime: number | undefined
+  private lossTimer: TimerHandle | undefined
 
   constructor (opts: SentPacketManagerOptions) {
     this.clock = opts.clock
     this.cc = opts.congestion
-    this.onRetransmit = opts.onRetransmit
+    this.onLost = opts.onLost
   }
 
   /** Allocates the next sequence number (u32, wrapping). */
@@ -76,83 +102,84 @@ export class SentPacketManager {
     return seq
   }
 
-  /** The sequence of the last data packet sent, or -1. */
+  /** The sequence of the last packet sent, or -1. */
   get lastSentSequence (): number {
     return this.lastSentSeq
   }
 
+  /** The largest sequence the peer has acknowledged, or -1. */
+  get largestAcked (): number {
+    return this.largestAck
+  }
+
+  /** Tracked packets, path-MTU probes included. */
   get pendingCount (): number {
     return this.sent.size
   }
 
-  get timerArmed (): boolean {
-    return this.timer !== undefined
+  get lossTimerArmed (): boolean {
+    return this.lossTimer !== undefined
+  }
+
+  /**
+   * When the ACK before the one (or the loss timer) that last declared loss
+   * arrived: persistent congestion asks whether anything was acknowledged
+   * since the oldest lost packet went out, which the ACK that revealed the
+   * loss does not answer.
+   */
+  get ackBeforeLoss (): number | undefined {
+    return this.ackBeforeLossTime
   }
 
   get (sequence: number): SentPacket | undefined {
     return this.sent.get(sequence)
   }
 
-  /** All tracked packets, in send order. */
+  /** All tracked packets, in sequence order. */
   packets (): IterableIterator<SentPacket> {
     return this.sent.values()
   }
 
-  /** SRTT + 4·RTTVAR, clamped to [200, 5000] ms. */
-  retransmitTimeout (): number {
-    return this.cc.rto()
-  }
-
-  /**
-   * The wait before retransmission attempt `attempt` (1-based): exponential
-   * from the RTO up to a ceiling of max(MAX_RETRANSMIT_BACKOFF, RTO). The
-   * ceiling never drops below the RTO, or a slow path would be flooded with
-   * duplicates before the peer could answer.
-   */
-  retransmitBackoff (attempt: number): number {
-    const rto = this.retransmitTimeout()
-    const ceiling = Math.max(MAX_RETRANSMIT_BACKOFF, rto)
-    let backoff = ceiling
-    const shift = attempt - 1
-    if (shift < 32) {
-      const scaled = rto * 2 ** shift
-      if (scaled < ceiling) backoff = scaled
-    }
-    return Math.max(MIN_RETRANSMIT_TIMEOUT, backoff)
-  }
-
   /**
    * How long a packet must have been outstanding before age alone marks it
-   * lost: 9/8 of max(SRTT, latest RTT), at least the timer granularity
-   * (RFC 9002 §6.1.2).
+   * lost: 9/8 of max(SRTT, latest RTT), at least the timer granularity (RFC
+   * 9002 §6.1.2). The larger of the two: after a sudden rise in delay the
+   * smoothed estimate lags, and would declare a whole window lost.
    */
   lossDelay (): number {
     const rtt = Math.max(this.cc.smoothedRtt, this.cc.latestRtt)
     return Math.max(LOSS_TIMER_GRANULARITY, rtt * LOSS_TIME_THRESHOLD)
   }
 
-  /** Registers a data packet that has just been sent under `packet.sequence`. */
-  onPacketSent (packet: Omit<SentPacket, 'sentTime' | 'retransmitCount' | 'lastRetransmit' | 'deadline'>): SentPacket {
+  /** Registers a packet that has just been sent under `info.sequence`. */
+  onPacketSent (info: SentPacketInfo): SentPacket {
     const now = this.clock.now()
     const tracked: SentPacket = {
-      ...packet,
+      ...info,
       sentTime: now,
+      firstSentTime: now,
       retransmitCount: 0,
       lastRetransmit: 0,
-      deadline: now + this.retransmitTimeout()
+      probe: info.probe ?? false,
+      acked: false
     }
     this.lastSentSeq = tracked.sequence
     this.sent.set(tracked.sequence, tracked)
-    this.armTimer(tracked.deadline)
     return tracked
   }
 
-  /** Removes and returns the packets an ACK frame newly acknowledges. */
+  /**
+   * Removes and returns the packets an ACK frame newly acknowledges. The
+   * caller books them with the congestion controller and then runs
+   * detectLost, in that order (RFC 9002 appendix A.7: the acknowledged bytes
+   * grow the window before the loss contracts it).
+   */
   onAckFrame (frame: AckFrame): SentPacket[] {
     const acked: SentPacket[] = []
     const take = (seq: number): void => {
       const pkt = this.sent.get(seq)
       if (pkt !== undefined) {
+        pkt.acked = true
         this.sent.delete(seq)
         acked.push(pkt)
       }
@@ -167,114 +194,108 @@ export class SentPacketManager {
       current = rangeEnd - r.length
     }
 
-    if (this.sent.size === 0) this.disarmTimer()
+    if (acked.length > 0) {
+      this.ackBeforeLossTime = this.lastAckTime
+      this.lastAckTime = this.clock.now()
+      if (frame.largestAcked > this.largestAck) this.largestAck = frame.largestAcked
+    }
     return acked
   }
 
   /**
-   * The packets an ACK frame's gaps show lost. A gap only counts once the
-   * packet is LOSS_REORDER_THRESHOLD sequences behind the largest acknowledged
-   * or older than lossDelay(); until then reordering still explains it.
-   * Packets retransmitted within the last RTO are skipped.
+   * Runs loss detection over everything outstanding (RFC 9002 §6.1) and
+   * returns what it declared lost, in sequence order, also handed to onLost.
+   * Called after each ACK that acknowledged something; the loss timer calls
+   * it when the time threshold elapses.
    */
-  detectLost (frame: AckFrame): SentPacket[] {
-    if (frame.ranges.length === 0) return []
-    const rto = this.retransmitTimeout()
-    const lossDelay = this.lossDelay()
-    const now = this.clock.now()
-    const lost: SentPacket[] = []
+  detectLost (): SentPacket[] {
+    const lost = this.detect(this.clock.now())
+    if (lost.length > 0) this.onLost?.(lost)
+    return lost
+  }
 
-    let cursor = frame.largestAcked - frame.firstAckRangeLength
-    for (const r of frame.ranges) {
-      for (let g = 0; g < r.gap; g++) {
-        if (cursor < 0) break
-        const pkt = this.sent.get(cursor)
-        if (pkt !== undefined) {
-          const recentlyResent = pkt.retransmitCount > 0 && now - pkt.lastRetransmit < rto
-          const behind = frame.largestAcked - cursor
-          const inFlight = behind < LOSS_REORDER_THRESHOLD && now - pkt.sentTime < lossDelay
-          if (!recentlyResent && !inFlight) lost.push(pkt)
-        }
-        cursor--
+  private detect (now: number): SentPacket[] {
+    this.stopLossTimer()
+    if (this.largestAck < 0) return []
+    const delay = this.lossDelay()
+    const lost: SentPacket[] = []
+    let nextLoss = Infinity
+    for (const [seq, pkt] of this.sent) {
+      if (seq > this.largestAck) break
+      if (this.largestAck - seq >= LOSS_REORDER_THRESHOLD || now >= pkt.sentTime + delay) {
+        lost.push(pkt)
+      } else if (pkt.sentTime + delay < nextLoss) {
+        nextLoss = pkt.sentTime + delay
       }
-      cursor -= r.length
+    }
+    for (const pkt of lost) this.sent.delete(pkt.sequence)
+    if (nextLoss !== Infinity) {
+      this.lossTimer = this.clock.setTimeout(() => this.onLossTimer(), Math.max(nextLoss - now, LOSS_TIMER_GRANULARITY))
     }
     return lost
   }
 
-  /**
-   * Moves an unacknowledged packet to a fresh sequence for re-sending and
-   * returns that sequence, or undefined if the packet was already acknowledged
-   * or was retransmitted within the last RTO (so an RTO and a SACK trigger for
-   * one loss produce one resend).
-   *
-   * The packet's send time restarts, so its RTT sample and loss timer measure
-   * from the resend. Inflight is untouched: the bytes never left flight.
-   */
-  retransmit (pkt: SentPacket): number | undefined {
-    const oldSeq = pkt.sequence
-    if (this.sent.get(oldSeq) !== pkt) return undefined
-    const now = this.clock.now()
-    if (pkt.retransmitCount > 0 && now - pkt.lastRetransmit < this.retransmitTimeout()) return undefined
+  /** Declares lost what has become old enough since the last ACK. */
+  private onLossTimer (): void {
+    this.lossTimer = undefined
+    this.ackBeforeLossTime = this.lastAckTime
+    const lost = this.detect(this.clock.now())
+    if (lost.length > 0) this.onLost?.(lost)
+  }
 
-    const newSeq = this.nextSequence()
-    this.sent.delete(oldSeq)
-    pkt.sequence = newSeq
+  private stopLossTimer (): void {
+    if (this.lossTimer !== undefined) this.clock.clearTimeout(this.lossTimer)
+    this.lossTimer = undefined
+  }
+
+  /**
+   * Gives a packet a fresh sequence for another transmission and tracks it
+   * under that number, returning the number, or undefined when the packet
+   * has been acknowledged or is a path-MTU probe and must not go out again.
+   *
+   * The packet may be tracked (a PTO probe re-sends the oldest outstanding
+   * packet, which stays outstanding) or not (loss detection removed it):
+   * either way it is tracked under the new number afterwards, with its send
+   * time reset so the RTT sample and loss detection measure from this send.
+   * Congestion accounting is the caller's: a probe's bytes are still in
+   * flight, a lost packet's left flight when it was declared lost.
+   */
+  resend (pkt: SentPacket): number | undefined {
+    if (pkt.acked || pkt.probe) return undefined
+    if (this.sent.get(pkt.sequence) === pkt) this.sent.delete(pkt.sequence)
+    const now = this.clock.now()
+    const seq = this.nextSequence()
+    pkt.sequence = seq
     pkt.retransmitCount++
     pkt.lastRetransmit = now
     pkt.sentTime = now
-    pkt.deadline = now + this.retransmitBackoff(pkt.retransmitCount)
-    this.sent.set(newSeq, pkt)
-    this.armTimer(pkt.deadline)
-    return newSeq
-  }
-
-  private armTimer (deadline: number): void {
-    if (this.timer !== undefined && deadline >= this.timerDeadline) return
-    this.disarmTimer()
-    this.timerDeadline = deadline
-    this.timer = this.clock.setTimeout(() => this.onTimer(), deadline - this.clock.now())
-  }
-
-  private disarmTimer (): void {
-    if (this.timer !== undefined) this.clock.clearTimeout(this.timer)
-    this.timer = undefined
-    this.timerDeadline = Infinity
+    this.lastSentSeq = seq
+    this.sent.set(seq, pkt)
+    return seq
   }
 
   /**
-   * Retransmits every packet whose deadline has passed. A timer-driven resend
-   * is a probe: it leaves the congestion window alone.
+   * Up to n outstanding packets, lowest sequence first, path-MTU probes left
+   * out: what a PTO re-sends (RFC 9002 §6.2.4). A re-send takes a fresh
+   * sequence, so the lowest numbers are the longest unsent.
    */
-  private onTimer (): void {
-    this.timer = undefined
-    this.timerDeadline = Infinity
-    const now = this.clock.now()
-
-    const due: SentPacket[] = []
-    for (const pkt of this.sent.values()) if (pkt.deadline <= now) due.push(pkt)
-
-    for (const pkt of due) {
-      const seq = this.retransmit(pkt)
-      if (seq !== undefined) {
-        this.onRetransmit?.(pkt, seq)
-      } else if (this.sent.get(pkt.sequence) === pkt) {
-        // Collapsed into a recent resend. Go stops this packet's timer here,
-        // leaving it to SACK alone; keep a deadline so the timer still backs it up.
-        pkt.deadline = pkt.lastRetransmit + this.retransmitTimeout()
-      }
+  oldestUnacked (n: number): SentPacket[] {
+    const out: SentPacket[] = []
+    for (const pkt of this.sent.values()) {
+      if (out.length >= n) break
+      if (!pkt.probe) out.push(pkt)
     }
-
-    // Every remaining deadline is now in the future. The floor is a backstop:
-    // a stale deadline must not turn the timer into a spin.
-    let next = Infinity
-    for (const pkt of this.sent.values()) if (pkt.deadline < next) next = pkt.deadline
-    if (next !== Infinity) this.armTimer(Math.max(next, now + LOSS_TIMER_GRANULARITY))
+    return out
   }
 
-  /** Cancels the timer and forgets every packet. */
+  /** Forgets a tracked packet that is being replaced by others (re-chunked), neither acknowledged nor lost. */
+  drop (pkt: SentPacket): void {
+    if (this.sent.get(pkt.sequence) === pkt) this.sent.delete(pkt.sequence)
+  }
+
+  /** Stops the loss timer and forgets every packet. */
   destroy (): void {
-    this.disarmTimer()
+    this.stopLossTimer()
     this.sent.clear()
   }
 }

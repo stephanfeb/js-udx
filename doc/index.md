@@ -27,7 +27,7 @@ how to build them from source and use them in your project.
 | Congestion control | CUBIC, with RFC 9002 RTT estimation, pacing and delayed ACKs |
 | Flow control | Per stream (auto-tuned, up to 4 MiB) and per connection |
 | One socket, many connections | A `UdxMultiplexer` accepts and dials on the same UDP socket, routing by connection ID |
-| Path MTU discovery | Probes up to 1472-byte datagrams (RFC 8899) |
+| Path MTU discovery | Starts at 1200-byte datagrams, which every path carries, probes up to 1472, and falls back if the path shrinks (RFC 8899) |
 | Anti-amplification | An accepted connection sends at most 3× what it has received until the peer proves its address |
 | Path migration | Follows a peer whose address changes (a NAT rebinding, say) once the new address answers a challenge |
 | Keep-alive and ping | Optional PINGs that keep an idle connection open, and an acknowledged `ping()` |

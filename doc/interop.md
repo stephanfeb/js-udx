@@ -22,7 +22,7 @@ from dart_udx. Each is built so it still works with both:
 
 | Feature | With go-udx | With dart_udx |
 |---|---|---|
-| Path MTU discovery | Rises to 1472-byte datagrams (v0.1.3 and later) | Rises to 1472-byte datagrams |
+| Path MTU discovery | From 1200 up to 1472-byte datagrams, falling back on a black hole (v0.3.0; v0.1.3 and later answer the probes) | Same (4.3.0) |
 | Anti-amplification | Works: go-udx answers the address challenge | Works: dart_udx answers the address challenge |
 | Path migration | js-udx follows a go-udx peer that moves; go-udx doesn't follow js-udx | Both follow each other |
 | Stateless reset | No effect: go-udx ignores reset tokens | No effect: dart_udx doesn't use reset tokens |

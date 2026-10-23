@@ -1,6 +1,7 @@
-// End-to-end reliability on virtual time: a sender (LossRecovery + Pacer) and a
-// receiver (AckScheduler) joined by a simulated link with delay, reordering
-// and loss. Deterministic, so the counts are exact: the JS equivalent of
+// End-to-end reliability on virtual time: a sender (LossRecovery + Pacer,
+// driven as UdxConnection.flush drives them: lost data first, then new data)
+// and a receiver (AckScheduler) joined by a simulated link with delay,
+// reordering and loss. Deterministic, so the counts are exact: the JS equivalent of
 // go-udx's loss_detection_test.go transfers, without sockets or wall time.
 import { describe, expect, it } from 'vitest'
 import { AckScheduler, FrameType, INITIAL_CWND, LossRecovery, ManualClock } from '../src/index.js'
@@ -72,26 +73,49 @@ function transfer (packets: number, link: LinkConfig, timeLimit = 600_000): Resu
   // Sender.
   let retransmits = 0
   let maxCwnd = 0
+  let pumpScheduled = false
+  const schedulePump = (wait: number): void => {
+    if (pumpScheduled) return
+    pumpScheduled = true
+    clock.setTimeout(pump, wait)
+  }
+  const idOf = (frames: Array<{ type: number, offset?: number }>): number => {
+    const frame = frames[0]
+    return frame?.type === FrameType.Stream ? (frame.offset as number) : -1
+  }
   const recovery = new LossRecovery({
     clock,
+    // PTO probes.
     retransmit: (pkt, seq) => {
       retransmits++
-      const frame = pkt.frames[0]
-      const id = frame?.type === FrameType.Stream ? frame.offset : -1
+      const id = idOf(pkt.frames)
       send(() => onData(seq, id))
-    }
+    },
+    // Loss the loss timer declared, between ACKs.
+    onLostQueued: () => schedulePump(0)
   })
   let next = 0
-  let pumpScheduled = false
-  const pump = (): void => {
+  function pump (): void {
     pumpScheduled = false
-    while (next < packets && recovery.congestion.canSend(PACKET_SIZE)) {
+    for (;;) {
+      const lost = recovery.nextLost()
+      if (lost === undefined && next >= packets) return
       const wait = recovery.congestion.pacer.timeUntilSend()
       if (wait > 0) {
-        pumpScheduled = true
-        clock.setTimeout(pump, wait)
+        schedulePump(wait)
         return
       }
+      if (lost !== undefined) {
+        if (!recovery.congestion.canSend(lost.size)) return
+        const seq = recovery.resendNextLost()
+        if (seq === undefined) continue
+        recovery.congestion.pacer.onPacketSent(lost.size)
+        retransmits++
+        const id = idOf(lost.frames)
+        send(() => onData(seq, id))
+        continue
+      }
+      if (!recovery.congestion.canSend(PACKET_SIZE)) return
       const id = next++
       const seq = recovery.nextSequence()
       recovery.onDataPacketSent({
@@ -162,7 +186,7 @@ describe('simulated transfer', () => {
     report(`loss ${lossRate}`, r)
     expect(r.dropped).toBeGreaterThan(0)
     expect(r.delivered).toBe(MEGABYTE)
-    // Most losses are recovered by SACK, not left for the RTO.
+    // Most losses are declared from ACKs and re-sent once, not left for the PTO.
     expect(r.retransmits).toBeLessThan(r.dropped * 3)
   })
 
@@ -172,7 +196,7 @@ describe('simulated transfer', () => {
     expect(r.delivered).toBe(MEGABYTE)
   })
 
-  it('delivers everything at 50% loss in both directions, leaning on the RTO timer', () => {
+  it('delivers everything at 50% loss in both directions, leaning on the probe timeout', () => {
     const r = transfer(200, { delay: 20, lossRate: 0.5, seed: 3 })
     expect(r.delivered).toBe(200)
   })

@@ -117,7 +117,7 @@ console.log(`rtt ${conn.smoothedRtt} ms, cwnd ${conn.cwnd} bytes, datagrams up t
 |---|---|
 | `smoothedRtt` | Smoothed round-trip time, in ms |
 | `cwnd`, `inflight` | Congestion window and bytes in flight |
-| `datagramSize` | The largest datagram this connection sends, raised by path MTU discovery |
+| `datagramSize` | The largest datagram this connection sends: 1200 until path MTU discovery validates more, back to 1200 if the path shrinks |
 | `peerMaxData` | How many bytes the peer lets us have in flight |
 | `streamCount` | Open streams |
 | `remoteAddress`, `remotePort` | The peer's current address |

@@ -10,11 +10,9 @@ import {
   INITIAL_MAX_DATA,
   INITIAL_MAX_STREAMS,
   LOCAL_MAX_DATA,
-  MAX_DATAGRAM_SIZE,
   MAX_IDLE_TIMEOUT,
   MAX_INCOMING_STREAMS,
   MAX_UDP_PAYLOAD_IPV4,
-  PACING_GRANULARITY,
   PATH_VALIDATION_TIMEOUT,
   VERSION_CURRENT
 } from './constants.js'
@@ -22,13 +20,10 @@ import { ConnectionClosedError, UdxError } from './errors.js'
 import { ConnectionFlowController } from './flow-control.js'
 import { type AckFrame, type Frame, FrameType, STREAM_FRAME_HEADER_LENGTH, type StreamFrame } from './frames.js'
 import { type Packet, encodePacket, packetHeaderLength } from './packet.js'
-import { PmtuSearch } from './pmtud.js'
+import { MtuDiscovery } from './pmtud.js'
 import { LossRecovery } from './recovery.js'
 import type { SentPacket } from './sent-packets.js'
 import { type StreamHost, UdxStream, type UdxStreamOptions } from './stream.js'
-
-/** Payload per STREAM frame before path MTU discovery: MAX_DATAGRAM_SIZE − 100, as go-udx sends. */
-export const STREAM_CHUNK_SIZE = MAX_DATAGRAM_SIZE - 100
 
 /** How often the idle watchdog checks for silence. */
 const IDLE_CHECK_INTERVAL = 1000
@@ -73,7 +68,10 @@ export interface UdxConnectionOptions {
   antiAmplification?: boolean
   /** Follow the peer to a new address after validating it (RFC 9000 §9). Default true. */
   migration?: boolean
-  /** Probe for a larger path MTU (RFC 8899). Default true. */
+  /**
+   * Probe for a larger path MTU (RFC 8899). Default true. Off, streams send
+   * datagrams of SAFE_DATAGRAM_SIZE (1200 bytes) for the life of the connection.
+   */
   pmtud?: boolean
   /** Largest UDP payload to probe for. Default 1472 (a 1500-byte IPv4 MTU). */
   maxDatagramSize?: number
@@ -157,9 +155,7 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
 
   // Path MTU discovery.
   private readonly pmtudEnabled: boolean
-  private readonly maxDatagram: number
-  private pmtu: PmtuSearch | undefined
-  private probe: { sequence: number, size: number, timer: TimerHandle } | undefined
+  private readonly mtu: MtuDiscovery
 
   // Acknowledged pings waiting to resolve.
   private readonly pings = new Map<number, { resolve: (ok: boolean) => void, timer: TimerHandle }>()
@@ -187,7 +183,7 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     this.streamOptions = opts.streamOptions
     this.migrationEnabled = opts.migration ?? true
     this.pmtudEnabled = opts.pmtud ?? true
-    this.maxDatagram = opts.maxDatagramSize ?? MAX_UDP_PAYLOAD_IPV4
+    this.mtu = new MtuDiscovery(this.clock, opts.maxDatagramSize ?? MAX_UDP_PAYLOAD_IPV4)
     this.validated = opts.initiator || opts.antiAmplification === false
     this.nextStreamId = opts.initiator ? 1 : 2
     this.lastActivity = this.clock.now()
@@ -196,7 +192,13 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     // Nobody may await it; a close before establishment must not surface as unhandled.
     this.established.catch(() => {})
 
-    this.recovery = new LossRecovery({ clock: this.clock, retransmit: (pkt, seq) => this.retransmit(pkt, seq) })
+    this.recovery = new LossRecovery({
+      clock: this.clock,
+      retransmit: (pkt, seq) => this.retransmit(pkt, seq),
+      onLostQueued: () => this.scheduleFlush(),
+      mtu: this.mtu,
+      fitToPath: (pkt) => this.fitToPath(pkt)
+    })
     this.acks = new AckScheduler({
       clock: this.clock,
       smoothedRtt: () => this.recovery.congestion.smoothedRtt,
@@ -224,8 +226,11 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
   get streamCount (): number { return this.activeStreams }
   /** Whether the peer's address is proven (always true for a dialer). */
   get addressValidated (): boolean { return this.validated }
-  /** The largest datagram this connection sends; raised by path MTU discovery. */
-  get datagramSize (): number { return this.pmtu?.current ?? this.baseDatagramSize() }
+  /**
+   * The largest datagram this connection sends: SAFE_DATAGRAM_SIZE until path
+   * MTU discovery validates more, back there after a black hole.
+   */
+  get datagramSize (): number { return this.mtu.current }
   /** The peer's limit on our bytes in flight (MAX_DATA). */
   get peerMaxData (): number { return this.connFc.peerMaxData }
 
@@ -282,7 +287,7 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
   }
 
   private isFlushed (): boolean {
-    if (this.recovery.congestion.inflight > 0) return false
+    if (this.recovery.congestion.inflight > 0 || this.recovery.lostCount > 0) return false
     for (const s of this.streams.values()) if (s.hasSendable()) return false
     return true
   }
@@ -368,17 +373,18 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
       if (frame.type === FrameType.Stream) {
         if (frame.data.length > 0 || frame.syn || frame.fin) dataBearing = true
         if (frame.syn || frame.fin) edge = true
-      } else if (frame.type === FrameType.Ping) {
+      } else if (frame.type === FrameType.Ping || frame.type === FrameType.MtuProbe) {
         ping = true
       }
       this.handleFrame(pkt, frame, address, port)
     }
     if (this.closedFlag) return
 
-    // Data-bearing packets are acknowledged, as in go-udx. So is a PING sent
-    // under a real sequence (dart-udx's ping and our probes), at once. go-udx
-    // sends PINGs and all other control packets with sequence 0, and those are
-    // never acknowledged: ACKing control packets would make ACKs elicit ACKs.
+    // Data-bearing packets are acknowledged, as in go-udx. So is a PING or an
+    // MTU probe sent under a real sequence (dart-udx's ping, every stack's
+    // path-MTU probes; go-udx v0.3.0's carry no PING), at once. go-udx sends
+    // its other control packets with sequence 0, and those are never
+    // acknowledged: ACKing control packets would make ACKs elicit ACKs.
     if (dataBearing || (ping && pkt.sequence !== 0)) {
       this.acks.onDataPacket(pkt.sequence, edge || !dataBearing, { destinationStreamId: pkt.sourceStreamId, sourceStreamId: pkt.destinationStreamId })
     }
@@ -438,7 +444,9 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
   }
 
   private handleAck (frame: AckFrame): void {
-    if (this.recovery.onAckFrame(frame) > 0) this.scheduleFlush()
+    // Lost data and new data both go through the flush, lost first.
+    this.recovery.onAckFrame(frame)
+    this.scheduleFlush()
     this.checkFlushed()
     for (const [seq, ping] of this.pings) {
       if (ackCovers(frame, seq)) {
@@ -446,11 +454,6 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
         this.pings.delete(seq)
         ping.resolve(true)
       }
-    }
-    if (this.probe !== undefined && ackCovers(frame, this.probe.sequence)) {
-      this.clock.clearTimeout(this.probe.timer)
-      this.pmtu?.onProbeAcked(this.probe.size)
-      this.probe = undefined
     }
     this.maybeProbe()
   }
@@ -524,9 +527,9 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     return { data: randomFillSync(new Uint8Array(8)), address, port, timer: this.clock.setTimeout(onTimeout, timeoutMs) }
   }
 
-  /** The address challenge is retried every RTO, a few times. */
+  /** The address challenge is retried every PTO, a few times. */
   private addressChallengeTimeout (): number {
-    return Math.min(PATH_VALIDATION_TIMEOUT, this.recovery.sentPackets.retransmitTimeout())
+    return Math.min(PATH_VALIDATION_TIMEOUT, this.recovery.congestion.pto())
   }
 
   /**
@@ -599,50 +602,75 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     return packetHeaderLength(this.remoteCid.length, this.localCid.length)
   }
 
-  /** go-udx's datagram size: header + STREAM frame header + 1372 bytes. */
-  private baseDatagramSize (): number {
-    return this.headerLength() + STREAM_FRAME_HEADER_LENGTH + STREAM_CHUNK_SIZE
-  }
-
+  /** The STREAM payload that fills a datagram of the current size. */
   private chunkSize (): number {
     return this.datagramSize - this.headerLength() - STREAM_FRAME_HEADER_LENGTH
   }
 
+  /**
+   * A new path: its MTU is unknown, so the search starts again from the base
+   * size (RFC 9000 §9.4). Probes still outstanding on the old path are
+   * forgotten, so a late ACK of one cannot validate its size here.
+   */
   private restartPmtud (): void {
-    if (this.probe !== undefined) this.clock.clearTimeout(this.probe.timer)
-    this.probe = undefined
-    this.pmtu = undefined
+    for (const pkt of [...this.recovery.sentPackets.packets()]) {
+      if (pkt.probe) this.recovery.sentPackets.drop(pkt)
+    }
+    this.mtu.reset()
     this.maybeProbe()
   }
 
   /**
-   * Sends the next probe once the peer has been heard from and its address
-   * proven (a probe is large; unproven, it would only queue). A probe is a PING
-   * (so peers that acknowledge PINGs answer) padded with MTU_PROBE to the size
-   * under test. It is not tracked for retransmission: a lost probe is the
-   * answer "too big", not congestion.
+   * Sends the next path-MTU probe when the search wants one: a PING (so
+   * peers that only acknowledge PINGs answer) padded with MTU_PROBE to the
+   * size under test, numbered and tracked so its ACK or loss reports back,
+   * but not in flight and never re-sent (LossRecovery.onProbeSent). Probing
+   * waits for the peer's address to be proven (a probe is large; unproven it
+   * would only queue) and for an RTT sample, which loss detection needs, and
+   * follows the ACKs: a connection with nothing to acknowledge has nothing
+   * to gain from a larger datagram.
    */
   private maybeProbe (): void {
-    if (!this.pmtudEnabled || this.closedFlag || this.probe !== undefined) return
-    if (!this.isEstablished || !this.validated) return
-    if (this.pmtu === undefined) {
-      const base = this.baseDatagramSize()
-      if (this.maxDatagram <= base) return
-      this.pmtu = new PmtuSearch(base, this.maxDatagram)
-    }
-    const size = this.pmtu.nextProbe()
-    if (size === undefined) return
+    if (!this.pmtudEnabled || this.closedFlag) return
+    if (!this.isEstablished || !this.validated || !this.recovery.congestion.hasRttSample) return
+    const size = this.mtu.nextProbe()
+    if (size === 0) return
     const sequence = this.ackElicitingSequence()
-    const header = this.headerLength()
-    const datagram = this.encode(sequence, 0, 0, [{ type: FrameType.Ping }, { type: FrameType.MtuProbe, size: size - header - 1 }])
-    const timer = this.clock.setTimeout(() => {
-      if (this.probe?.sequence !== sequence) return
-      this.probe = undefined
-      this.pmtu?.onProbeLost(size)
-      this.maybeProbe()
-    }, 2 * this.recovery.sentPackets.retransmitTimeout())
-    this.probe = { sequence, size, timer }
+    const frames: Frame[] = [{ type: FrameType.Ping }, { type: FrameType.MtuProbe, size: size - this.headerLength() - 1 }]
+    const datagram = this.encode(sequence, 0, 0, frames)
+    this.recovery.onProbeSent({ sequence, size: datagram.length, frames, destinationStreamId: 0, sourceStreamId: 0 })
     this.write(datagram)
+  }
+
+  /**
+   * Re-chunks a packet larger than the path now carries (the size fell back
+   * after a black hole) into packets that fit, in its place: the original is
+   * dropped from tracking, and the pieces take fresh sequences when they are
+   * re-sent. A packet that fits comes back alone. Only a packet carrying one
+   * STREAM frame is split, which is every data packet a stream sends.
+   */
+  private fitToPath (pkt: SentPacket): SentPacket[] {
+    const limit = this.datagramSize
+    const frame = pkt.frames[0]
+    if (pkt.size <= limit || pkt.frames.length !== 1 || frame?.type !== FrameType.Stream) return [pkt]
+    const overhead = this.headerLength() + STREAM_FRAME_HEADER_LENGTH
+    const piece = limit - overhead
+    if (piece <= 0 || piece >= frame.data.length) return [pkt]
+    this.recovery.sentPackets.drop(pkt)
+    const pieces: SentPacket[] = []
+    for (let off = 0; off < frame.data.length; off += piece) {
+      const data = frame.data.subarray(off, off + piece)
+      const last = off + piece >= frame.data.length
+      const f: StreamFrame = { type: FrameType.Stream, syn: frame.syn && off === 0, fin: frame.fin && last, offset: frame.offset + off, data }
+      pieces.push({
+        ...pkt,
+        size: overhead + data.length,
+        frames: [f],
+        acked: false,
+        probe: false
+      })
+    }
+    return pieces
   }
 
   // --- Outbound ---
@@ -657,20 +685,46 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
   }
 
   /**
-   * Sends stream data while the congestion window, the pacer and the peer's
-   * MAX_DATA allow, taking one frame from each stream with something to send
-   * in turn.
+   * Re-sends lost packets, then sends stream data, while the congestion
+   * window, the pacer and the peer's MAX_DATA allow, taking one frame from
+   * each stream with something to send in turn. Lost data goes first: the
+   * window an ACK opens goes to the re-sends before new data (go-udx's
+   * flushLost).
    */
   private flush (): void {
     if (this.closedFlag) return
+    const r = this.recovery
+    const cc = r.congestion
+    for (let pkt = r.nextLost(); pkt !== undefined; pkt = r.nextLost()) {
+      if (pkt.size > this.datagramSize) {
+        // The path shrank under it: its pieces take its place in the
+        // queue, each through the gates below.
+        const pieces = this.fitToPath(pkt)
+        if (pieces.length > 1) {
+          r.replaceNextLost(pieces)
+          continue
+        }
+      }
+      const wait = cc.pacer.timeUntilSend()
+      if (wait > 0) {
+        this.armPacer(wait)
+        return
+      }
+      if (!cc.canSend(pkt.size)) return // an ACK will reopen it
+      const seq = r.resendNextLost()
+      if (seq === undefined) continue
+      cc.pacer.onPacketSent(pkt.size)
+      this.retransmit(pkt, seq)
+      if (this.closedFlag) return
+    }
+
     this.refreshSendOrder()
-    const cc = this.recovery.congestion
     const chunk = this.chunkSize()
     const full = this.datagramSize
     let idle = 0
     while (this.sendOrder.length > 0 && idle < this.sendOrder.length) {
       const wait = cc.pacer.timeUntilSend()
-      if (wait > PACING_GRANULARITY) {
+      if (wait > 0) {
         this.armPacer(wait)
         return
       }
@@ -693,10 +747,10 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     }
   }
 
-  /** At most once per RTO: the peer answers with MAX_DATA. */
+  /** At most once per PTO: the peer answers with MAX_DATA. */
   private sendDataBlocked (): void {
     const now = this.clock.now()
-    if (now - this.dataBlockedSentAt < this.recovery.sentPackets.retransmitTimeout()) return
+    if (now - this.dataBlockedSentAt < this.recovery.congestion.pto()) return
     this.dataBlockedSentAt = now
     this.sendControl(0, 0, [{ type: FrameType.DataBlocked, limit: this.connFc.peerMaxData }])
   }
@@ -788,9 +842,9 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     this.teardown(new ConnectionClosedError(ErrorCode.InternalError, 'stateless reset', true))
   }
 
-  /** max(MAX_IDLE_TIMEOUT, 3 × RTO): loss recovery always gets three RTOs first (RFC 9000 §10.1). */
+  /** max(MAX_IDLE_TIMEOUT, 3 × PTO): loss recovery always gets three PTOs first (RFC 9000 §10.1). */
   idleTimeout (): number {
-    return Math.max(MAX_IDLE_TIMEOUT, 3 * this.recovery.sentPackets.retransmitTimeout())
+    return Math.max(MAX_IDLE_TIMEOUT, 3 * this.recovery.congestion.pto())
   }
 
   private armIdleCheck (): void {
@@ -816,12 +870,11 @@ export class UdxConnection extends EventEmitter<UdxConnectionEvents> {
     this.closedFlag = true
     const reportable = err.code === ErrorCode.NoError && !err.remote ? undefined : err
     this.closedError = err
-    for (const t of [this.idleTimer, this.pacerTimer, this.probe?.timer, this.addressChallenge?.timer, this.pathChallenge?.timer]) {
+    for (const t of [this.idleTimer, this.pacerTimer, this.addressChallenge?.timer, this.pathChallenge?.timer]) {
       if (t !== undefined) this.clock.clearTimeout(t)
     }
     this.idleTimer = undefined
     this.pacerTimer = undefined
-    this.probe = undefined
     this.addressChallenge = undefined
     this.pathChallenge = undefined
     this.ampQueue.length = 0
