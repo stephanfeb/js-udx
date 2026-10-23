@@ -40,5 +40,14 @@
     "@libp2p/ping": "^3.1.13",
     "@libp2p/tcp": "^11.0.28",
     "libp2p": "^3.3.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stephanfeb/js-udx.git",
+    "directory": "packages/libp2p-udx"
+  },
+  "homepage": "https://cryptopeer.net/udx/js/",
+  "publishConfig": {
+    "access": "public"
   }
 }
