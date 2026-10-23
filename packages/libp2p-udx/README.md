@@ -26,5 +26,10 @@ UDP socket per address family. The transport pings a connection after 10 s
 without hearing from the peer, so idle connections outlive UDX's 30 s idle
 timeout at both ends. `UDX` is a multiaddr matcher for these addresses.
 
+In a browser, where the transport can't run, import
+`@stephanfeb/libp2p-udx/multiaddr` instead: it only registers the `udx`
+multiaddr codec, so js-libp2p web apps can use relays that advertise `/udx`
+addresses. See [In a browser](https://cryptopeer.net/udx/js/libp2p/#in-a-browser).
+
 Documentation: [cryptopeer.net/udx/js](https://cryptopeer.net/udx/js/).
 Source and changelog: [github.com/stephanfeb/js-udx](https://github.com/stephanfeb/js-udx).

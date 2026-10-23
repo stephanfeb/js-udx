@@ -2,6 +2,20 @@
 
 All notable changes to js-udx (`@stephanfeb/udx` and `@stephanfeb/libp2p-udx`).
 
+## [0.1.1] - 2026-10-23
+
+`@stephanfeb/libp2p-udx` only; `@stephanfeb/udx` is unchanged at 0.1.0.
+
+### Added
+
+- **A browser entry, `@stephanfeb/libp2p-udx/multiaddr`.** It registers the `udx`
+  multiaddr codec and exports `UDX`, `parseUdxMultiaddr` and `toUdxMultiaddr`, with no
+  Node.js built-ins, so it bundles for the browser. js-libp2p web apps need the codec to
+  use relays that advertise `/udx` addresses (go-ricochet, dart-libp2p): without it
+  js-libp2p rejects their reservations with `Protocol 768 was unknown`. The package root
+  imports the transport and `node:dgram`, so browser bundles of it fail. A test bundles
+  both for the browser to keep it that way.
+
 ## [0.1.0] - 2026-10-23
 
 First tagged release: the UDX v3 protocol, interoperable with go-udx v0.3.0

@@ -120,6 +120,54 @@ go-libp2p-udx-transport and dart-libp2p do) when it's imported, so
 | `parseUdxMultiaddr(ma)` | `{ host, port, family }` for a UDX address, else `undefined` |
 | `toUdxMultiaddr(host, port)` | The UDX multiaddr for a UDP endpoint |
 
+## In a browser
+
+Browsers can't send raw UDP, so the transport doesn't run in a browser. A
+web app may still need to read UDX addresses, though. Relays that speak UDX
+as well as WebSockets (go-ricochet, dart-libp2p relays) list their `/udx`
+address in the reservations they grant. js-libp2p can't parse that address
+without the `udx` codec, and then it rejects the whole reservation with
+`Protocol 768 was unknown`. That breaks, for example, a browser that reaches
+Dart or Flutter apps over [WebRTC](../../dart-libp2p-webrtc/doc/browsers.md)
+through such a relay.
+
+The package has a browser entry that registers the codec and nothing else:
+
+```sh
+npm install @stephanfeb/libp2p-udx
+```
+
+```ts
+import '@stephanfeb/libp2p-udx/multiaddr'
+```
+
+Import it before creating the js-libp2p node. It has no Node.js built-ins,
+so bundlers (esbuild, Vite, webpack) build it for the browser; the package
+root (`@stephanfeb/libp2p-udx`) brings in the transport and doesn't. It also
+exports `UDX`, `parseUdxMultiaddr` and `toUdxMultiaddr` (see
+[Addresses](#addresses)).
+
+The codec goes into `@multiformats/multiaddr`'s registry, so the app and the
+package must share one copy of that package. They do when the app depends on
+a compatible version (js-libp2p v3 and this package both use v13); with two
+copies installed, the codec lands in the other one. `npm ls
+@multiformats/multiaddr` shows which copies you have.
+
+### Without the dependency
+
+The codec is one line. To skip the package, register it yourself, before
+creating the node:
+
+```ts
+import { registry } from '@multiformats/multiaddr'
+
+registry.addProtocol({ code: 0x0300, name: 'udx', size: 0 })
+```
+
+`0x0300` is the code go-libp2p-udx-transport and dart-libp2p use; `size: 0`
+means the component carries no value. Registering it again (say, once from
+your app and once from the package) is harmless.
+
 ## Options
 
 `udx(init)` takes:

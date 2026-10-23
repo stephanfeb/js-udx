@@ -1,6 +1,6 @@
 {
   "name": "@stephanfeb/libp2p-udx",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "js-libp2p transport over UDX (/udp/<port>/udx)",
   "license": "Apache-2.0",
   "type": "module",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./multiaddr": {
+      "types": "./dist/multiaddr.d.ts",
+      "import": "./dist/multiaddr.js"
     }
   },
   "files": [
@@ -39,6 +43,7 @@
     "@libp2p/interface-compliance-tests": "^7.0.32",
     "@libp2p/ping": "^3.1.13",
     "@libp2p/tcp": "^11.0.28",
+    "esbuild": "^0.25.12",
     "libp2p": "^3.3.11"
   },
   "repository": {

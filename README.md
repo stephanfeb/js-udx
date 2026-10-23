@@ -2,7 +2,8 @@
 
 TypeScript port of the UDX protocol (wire v3), a QUIC-inspired reliable UDP
 transport, plus a js-libp2p transport built on it. Node.js only. Browsers have
-no raw UDP.
+no raw UDP, but a browser entry registers the `udx` multiaddr codec for
+js-libp2p web apps; see [In a browser](doc/libp2p.md#in-a-browser).
 
 | Package | Purpose |
 |---|---|
