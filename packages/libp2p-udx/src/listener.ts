@@ -1,6 +1,6 @@
 import { AlreadyStartedError, InvalidParametersError } from '@libp2p/interface'
 import { getThinWaistAddresses } from '@libp2p/utils'
-import { UdxMultiplexer, type UdxConnection, type UdxMultiplexerOptions } from '@stephanfeb/udx'
+import { UdxMultiplexer, type UdxConnection, type UdxMultiplexerOptions } from '@go-ricochet/udx'
 import { TypedEventEmitter } from 'main-event'
 import { UdxMultiaddrConnection } from './connection.js'
 import { parseUdxMultiaddr, toUdxMultiaddr } from './multiaddr.js'

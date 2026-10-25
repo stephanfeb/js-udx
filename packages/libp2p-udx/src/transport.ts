@@ -1,5 +1,5 @@
 import { AbortError, InvalidParametersError, serviceCapabilities, transportSymbol } from '@libp2p/interface'
-import { UdxMultiplexer, type UdxConnection, type UdxMultiplexerOptions } from '@stephanfeb/udx'
+import { UdxMultiplexer, type UdxConnection, type UdxMultiplexerOptions } from '@go-ricochet/udx'
 import { UdxMultiaddrConnection } from './connection.js'
 import { UdxListener } from './listener.js'
 import { isUdxMultiaddr, parseUdxMultiaddr } from './multiaddr.js'
@@ -37,7 +37,7 @@ const DEFAULT_CLOSE_TIMEOUT = 5_000
  */
 export class UdxTransport implements Transport, Startable {
   readonly [transportSymbol] = true
-  readonly [Symbol.toStringTag] = '@stephanfeb/libp2p-udx'
+  readonly [Symbol.toStringTag] = '@go-ricochet/libp2p-udx'
   readonly [serviceCapabilities]: string[] = ['@libp2p/transport']
 
   private readonly components: UdxComponents

@@ -2,7 +2,7 @@
 // queue is full, while the receiver reads in 1 MiB steps with pauses, then
 // closes only once the receiver has read everything.
 // Run: node examples/backpressure.ts
-import { dial, listen, type UdxStream } from '@stephanfeb/udx'
+import { dial, listen, type UdxStream } from '@go-ricochet/udx'
 
 const TOTAL = 16 * 1024 * 1024
 

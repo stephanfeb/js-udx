@@ -5,7 +5,7 @@ import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
 import { identify } from '@libp2p/identify'
 import { ping } from '@libp2p/ping'
-import { UDX, udx } from '@stephanfeb/libp2p-udx'
+import { UDX, udx } from '@go-ricochet/libp2p-udx'
 import { createLibp2p } from 'libp2p'
 import type { Stream } from '@libp2p/interface'
 

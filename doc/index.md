@@ -12,13 +12,13 @@ js-udx runs on Node.js only: browsers can't send raw UDP.
 
 | Package | What it is | Node.js |
 |---|---|---|
-| `@stephanfeb/udx` | The protocol: connections, streams, reliability, congestion and flow control. No libp2p dependency. | ≥ 20 |
-| `@stephanfeb/libp2p-udx` | A js-libp2p transport for `/ip4/<ip>/udp/<port>/udx` and `/ip6/…` addresses. | ≥ 22 (js-libp2p v3 needs it) |
+| `@go-ricochet/udx` | The protocol: connections, streams, reliability, congestion and flow control. No libp2p dependency. | ≥ 20 |
+| `@go-ricochet/libp2p-udx` | A js-libp2p transport for `/ip4/<ip>/udp/<port>/udx` and `/ip6/…` addresses. | ≥ 22 (js-libp2p v3 needs it) |
 
 Both are on npm:
 
 ```sh
-npm install @stephanfeb/udx
+npm install @go-ricochet/udx
 ```
 
 [Getting started](getting-started.md) has the js-libp2p install and a first

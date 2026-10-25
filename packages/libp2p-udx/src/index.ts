@@ -10,7 +10,7 @@
  * import { createLibp2p } from 'libp2p'
  * import { noise } from '@chainsafe/libp2p-noise'
  * import { yamux } from '@chainsafe/libp2p-yamux'
- * import { udx } from '@stephanfeb/libp2p-udx'
+ * import { udx } from '@go-ricochet/libp2p-udx'
  *
  * const node = await createLibp2p({
  *   addresses: { listen: ['/ip4/0.0.0.0/udp/0/udx'] },
@@ -20,7 +20,7 @@
  * })
  * ```
  */
-import { VERSION_CURRENT } from '@stephanfeb/udx'
+import { VERSION_CURRENT } from '@go-ricochet/udx'
 import { UdxTransport, type UdxComponents, type UdxTransportInit } from './transport.js'
 import type { Transport } from '@libp2p/interface'
 

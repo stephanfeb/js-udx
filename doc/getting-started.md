@@ -5,18 +5,18 @@
 Both packages are on npm. For UDX on its own:
 
 ```sh
-npm install @stephanfeb/udx
+npm install @go-ricochet/udx
 ```
 
 For js-libp2p, install the transport with libp2p, Noise and Yamux. The
-transport brings `@stephanfeb/udx` with it:
+transport brings `@go-ricochet/udx` with it:
 
 ```sh
-npm install @stephanfeb/libp2p-udx libp2p @chainsafe/libp2p-noise @chainsafe/libp2p-yamux
+npm install @go-ricochet/libp2p-udx libp2p @chainsafe/libp2p-noise @chainsafe/libp2p-yamux
 ```
 
-Both packages are ES modules with TypeScript types. `@stephanfeb/udx` needs
-Node.js 20 or later, and `@stephanfeb/libp2p-udx` needs Node.js 22, as
+Both packages are ES modules with TypeScript types. `@go-ricochet/udx` needs
+Node.js 20 or later, and `@go-ricochet/libp2p-udx` needs Node.js 22, as
 js-libp2p v3 does.
 
 ### From source
@@ -48,7 +48,7 @@ connects to it, sends a message and prints the reply:
 ```ts
 // A UDX echo server and a client that talks to it, in one process.
 // Run: node examples/echo.ts
-import { dial, listen } from '@stephanfeb/udx'
+import { dial, listen } from '@go-ricochet/udx'
 
 const server = await listen({ host: '127.0.0.1', port: 0 })
 server.on('connection', conn => {
@@ -77,7 +77,7 @@ await server.close()
 <!-- /example -->
 
 It prints `hello, udx`. Save it as `echo.mjs` in a project where you
-installed `@stephanfeb/udx` and run `node echo.mjs`; it is plain JavaScript as
+installed `@go-ricochet/udx` and run `node echo.mjs`; it is plain JavaScript as
 well as TypeScript. On Node.js 22.18 or later you can also run it from a
 js-udx checkout as `node examples/echo.ts`.
 

@@ -2,7 +2,7 @@
 // accept()/acceptStream(), several concurrent streams on one connection,
 // ping and the connection's statistics.
 // Run: node examples/one-socket.ts
-import { UdxMultiplexer, type UdxStream } from '@stephanfeb/udx'
+import { UdxMultiplexer, type UdxStream } from '@go-ricochet/udx'
 
 // #region peers
 const alice = await UdxMultiplexer.create({ host: '127.0.0.1', port: 0 })

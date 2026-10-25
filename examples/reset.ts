@@ -1,7 +1,7 @@
 // How resets and closes surface: a stream reset by the peer, and a
 // connection closed by the peer with an error code.
 // Run: node examples/reset.ts
-import { ConnectionClosedError, StreamResetError, dial, listen } from '@stephanfeb/udx'
+import { ConnectionClosedError, StreamResetError, dial, listen } from '@go-ricochet/udx'
 
 const REJECTED = 0x42
 

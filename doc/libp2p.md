@@ -1,6 +1,6 @@
 # js-libp2p transport
 
-`@stephanfeb/libp2p-udx` lets a js-libp2p node dial and listen on UDX
+`@go-ricochet/libp2p-udx` lets a js-libp2p node dial and listen on UDX
 addresses:
 
 ```text
@@ -24,7 +24,7 @@ import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
 import { identify } from '@libp2p/identify'
 import { ping } from '@libp2p/ping'
-import { UDX, udx } from '@stephanfeb/libp2p-udx'
+import { UDX, udx } from '@go-ricochet/libp2p-udx'
 import { createLibp2p } from 'libp2p'
 import type { Stream } from '@libp2p/interface'
 
@@ -134,16 +134,16 @@ through such a relay.
 The package has a browser entry that registers the codec and nothing else:
 
 ```sh
-npm install @stephanfeb/libp2p-udx
+npm install @go-ricochet/libp2p-udx
 ```
 
 ```ts
-import '@stephanfeb/libp2p-udx/multiaddr'
+import '@go-ricochet/libp2p-udx/multiaddr'
 ```
 
 Import it before creating the js-libp2p node. It has no Node.js built-ins,
 so bundlers (esbuild, Vite, webpack) build it for the browser; the package
-root (`@stephanfeb/libp2p-udx`) brings in the transport and doesn't. It also
+root (`@go-ricochet/libp2p-udx`) brings in the transport and doesn't. It also
 exports `UDX`, `parseUdxMultiaddr` and `toUdxMultiaddr` (see
 [Addresses](#addresses)).
 

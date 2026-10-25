@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 
-// `@stephanfeb/libp2p-udx/multiaddr` is the browser entry: web apps running
+// `@go-ricochet/libp2p-udx/multiaddr` is the browser entry: web apps running
 // js-libp2p import it so relays that advertise /udx addresses (go-ricochet,
 // dart-libp2p) don't fail their reservations with "Protocol 768 was unknown".
 // It must bundle for the browser, unlike the package root, which pulls in the

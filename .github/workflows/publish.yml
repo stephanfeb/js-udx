@@ -1,0 +1,51 @@
+name: publish
+
+# Publishes to npm with provenance when a release tag is pushed:
+#   udx-v<version>         publishes @go-ricochet/udx
+#   libp2p-udx-v<version>  publishes @go-ricochet/libp2p-udx
+# The tag's version must match the package's package.json.
+#
+# Uses npm trusted publishing (OIDC): on npmjs.com, each package's settings
+# name this repository and this workflow file as its trusted publisher, so
+# no npm token is stored here.
+
+on:
+  push:
+    tags:
+      - 'udx-v*'
+      - 'libp2p-udx-v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - run: npm run ci
+      - name: Pick the package from the tag
+        id: pkg
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            udx-v*) dir=packages/udx; version="${tag#udx-v}" ;;
+            libp2p-udx-v*) dir=packages/libp2p-udx; version="${tag#libp2p-udx-v}" ;;
+            *) echo "unknown tag $tag"; exit 1 ;;
+          esac
+          actual=$(node -p "require('./$dir/package.json').version")
+          if [ "$actual" != "$version" ]; then
+            echo "tag says $version, $dir/package.json says $actual"; exit 1
+          fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+      - run: npm publish --provenance --access public
+        working-directory: ${{ steps.pkg.outputs.dir }}

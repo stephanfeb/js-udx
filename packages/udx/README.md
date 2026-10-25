@@ -1,4 +1,4 @@
-# @stephanfeb/udx
+# @go-ricochet/udx
 
 UDX for Node.js: a QUIC-inspired reliable transport over UDP, wire version 3.
 Many ordered byte streams per connection, RFC 9002 loss recovery and pacing,
@@ -9,7 +9,7 @@ MTU discovery from 1200-byte datagrams. Interoperates with
 have no raw UDP.
 
 ```ts
-import { listen, dial } from '@stephanfeb/udx'
+import { listen, dial } from '@go-ricochet/udx'
 
 // Server: echo every stream.
 const server = await listen({ host: '127.0.0.1', port: 9000 })
@@ -33,4 +33,4 @@ conn.close()
 
 Documentation: [cryptopeer.net/udx/js](https://cryptopeer.net/udx/js/).
 Source and changelog: [github.com/stephanfeb/js-udx](https://github.com/stephanfeb/js-udx).
-For js-libp2p, see [@stephanfeb/libp2p-udx](https://www.npmjs.com/package/@stephanfeb/libp2p-udx).
+For js-libp2p, see [@go-ricochet/libp2p-udx](https://www.npmjs.com/package/@go-ricochet/libp2p-udx).

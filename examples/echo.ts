@@ -1,6 +1,6 @@
 // A UDX echo server and a client that talks to it, in one process.
 // Run: node examples/echo.ts
-import { dial, listen } from '@stephanfeb/udx'
+import { dial, listen } from '@go-ricochet/udx'
 
 // #region server
 const server = await listen({ host: '127.0.0.1', port: 0 })

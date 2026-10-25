@@ -1,5 +1,5 @@
 import { AbstractMultiaddrConnection } from '@libp2p/utils'
-import { ConnectionClosedError, ErrorCode, type UdxConnection, type UdxStream } from '@stephanfeb/udx'
+import { ConnectionClosedError, ErrorCode, type UdxConnection, type UdxStream } from '@go-ricochet/udx'
 import type { AbortOptions } from '@libp2p/interface'
 import type { AbstractMultiaddrConnectionInit, SendResult } from '@libp2p/utils'
 import type { Uint8ArrayList } from 'uint8arraylist'

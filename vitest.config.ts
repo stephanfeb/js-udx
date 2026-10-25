@@ -18,7 +18,7 @@ export default defineConfig({
       },
       {
         resolve: {
-          alias: { '@stephanfeb/udx': udxSrc }
+          alias: { '@go-ricochet/udx': udxSrc }
         },
         test: {
           name: 'libp2p-udx',

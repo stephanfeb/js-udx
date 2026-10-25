@@ -1,5 +1,5 @@
 {
-  "name": "@stephanfeb/libp2p-udx",
+  "name": "@go-ricochet/libp2p-udx",
   "version": "0.1.1",
   "description": "js-libp2p transport over UDX (/udp/<port>/udx)",
   "license": "Apache-2.0",
@@ -32,7 +32,7 @@
     "@libp2p/utils": "^7.4.1",
     "@multiformats/multiaddr": "^13.0.3",
     "@multiformats/multiaddr-matcher": "^3.0.2",
-    "@stephanfeb/udx": "0.1.0",
+    "@go-ricochet/udx": "0.1.0",
     "main-event": "^1.0.5",
     "uint8arraylist": "^3.0.2"
   },

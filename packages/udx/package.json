@@ -1,5 +1,5 @@
 {
-  "name": "@stephanfeb/udx",
+  "name": "@go-ricochet/udx",
   "version": "0.1.0",
   "description": "UDX (wire v3) reliable, multiplexed UDP transport for Node.js",
   "license": "Apache-2.0",

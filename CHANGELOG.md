@@ -1,6 +1,16 @@
 # Changelog
 
-All notable changes to js-udx (`@stephanfeb/udx` and `@stephanfeb/libp2p-udx`).
+All notable changes to js-udx (`@go-ricochet/udx` and `@go-ricochet/libp2p-udx`,
+formerly `@stephanfeb/udx` and `@stephanfeb/libp2p-udx`).
+
+## [Unreleased]
+
+### Changed
+
+- **New npm scope.** The packages are now `@go-ricochet/udx` (0.1.0) and
+  `@go-ricochet/libp2p-udx` (0.1.1), the same code as the `@stephanfeb` releases.
+  They publish from GitHub Actions with npm provenance (`.github/workflows/publish.yml`).
+  The `@stephanfeb` packages are deprecated in favour of these.
 
 ## [0.1.1] - 2026-10-23
 

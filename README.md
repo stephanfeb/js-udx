@@ -16,7 +16,7 @@ authority. See [PLAN.md](PLAN.md) for the porting plan and the protocol rules.
 
 **Documentation:** [cryptopeer.net/udx/js](https://cryptopeer.net/udx/js/),
 built from [`doc/`](doc). Both packages are on npm:
-`npm install @stephanfeb/udx`, or `@stephanfeb/libp2p-udx` for js-libp2p (see
+`npm install @go-ricochet/udx`, or `@go-ricochet/libp2p-udx` for js-libp2p (see
 [Getting started](doc/getting-started.md)). Runnable programs are in
 [`examples/`](examples).
 
@@ -26,7 +26,7 @@ built from [`doc/`](doc). Both packages are on npm:
 import { createLibp2p } from 'libp2p'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
-import { udx } from '@stephanfeb/libp2p-udx'
+import { udx } from '@go-ricochet/libp2p-udx'
 
 const node = await createLibp2p({
   addresses: { listen: ['/ip4/0.0.0.0/udp/0/udx'] },
@@ -42,12 +42,12 @@ go-libp2p-udx-transport and dart-libp2p do. Dials share one UDP socket per
 address family. The transport pings a connection after 10 s without hearing
 from the peer (`keepAliveInterval`), so idle connections outlive UDX's 30 s
 idle timeout at both ends. `UDX` is a multiaddr matcher for these addresses.
-Needs Node ≥ 22, as js-libp2p v3 does; `@stephanfeb/udx` alone runs on Node 20.
+Needs Node ≥ 22, as js-libp2p v3 does; `@go-ricochet/udx` alone runs on Node 20.
 
 ## UDX
 
 ```ts
-import { listen, dial } from '@stephanfeb/udx'
+import { listen, dial } from '@go-ricochet/udx'
 
 // Server: echo every stream.
 const server = await listen({ host: '127.0.0.1', port: 9000 })
