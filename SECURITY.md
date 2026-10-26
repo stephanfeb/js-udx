@@ -20,4 +20,7 @@ reasonable time to fix a problem before you disclose it.
 - `@go-ricochet/udx` and `@go-ricochet/libp2p-udx` (this repository).
 - Releases are published only from this repository's `publish` workflow,
   with npm provenance. A release without a provenance statement did not
-  come from us.
+  come from us. The exceptions are the first releases,
+  `@go-ricochet/udx` 0.1.0 and `@go-ricochet/libp2p-udx` 0.1.1, published
+  by hand: npm lets a workflow publish a package only after the package
+  exists.
