@@ -1,13 +1,16 @@
 name: publish
 
-# Publishes to npm with provenance when a release tag is pushed:
+# Stages a release on npm, with provenance, when a release tag is pushed:
 #   udx-v<version>         publishes @go-ricochet/udx
 #   libp2p-udx-v<version>  publishes @go-ricochet/libp2p-udx
 # The tag's version must match the package's package.json.
 #
 # Uses npm trusted publishing (OIDC): on npmjs.com, each package's settings
 # name this repository and this workflow file as its trusted publisher, so
-# no npm token is stored here.
+# no npm token is stored here. The trusted publisher allows neither
+# npm publish nor npm dist-tag: the workflow can only stage a version, and
+# it goes public when a maintainer approves it with 2FA, on npmjs.com or
+# with `npm stage approve <id>`.
 
 on:
   push:
@@ -29,8 +32,8 @@ jobs:
         with:
           node-version: 22.18
           registry-url: https://registry.npmjs.org
-      # Trusted publishing needs npm 11.5.1 or later.
-      - run: npm install -g npm@11.6.2
+      # npm stage needs a newer npm than trusted publishing alone (11.5.1).
+      - run: npm install -g npm@11.21.1
       - run: npm ci
       - run: npm run ci
       - name: Pick the package from the tag
@@ -47,5 +50,5 @@ jobs:
             echo "tag says $version, $dir/package.json says $actual"; exit 1
           fi
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
-      - run: npm publish --provenance --access public
+      - run: npm stage publish --provenance --access public
         working-directory: ${{ steps.pkg.outputs.dir }}
